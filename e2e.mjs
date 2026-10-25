@@ -77,7 +77,9 @@ await ev(`(async()=>{const f=app.vault.getAbstractFileByPath('${NOTE}')||await a
 // profile checks every language and takes "bosjuor" or "helö" as words, so the cases that
 // judge the order of the fixes need the (French) word list.
 const wordList = await ev(`app.plugins.plugins["vim-extras"].settings.wordLists.trim()`);
-const langs = await ev(`app.plugins.plugins["vim-extras"].lists.map(l=>l.name.slice(0,2))`);
+// the model loads (or, the first time, builds in the worker) once Obsidian is idle: wait for it
+for (let i = 0; i < 120 && wordList && !(await ev(`!!app.plugins.plugins["vim-extras"].model && !app.plugins.plugins["vim-extras"].building`)); i++) await sleep(250);
+const langs = await ev(`app.plugins.plugins["vim-extras"].langs().map(l=>l.name.slice(0,2))`);
 const bilingual = langs.includes("fr") && langs.includes("en");
 try {
   // z= menu: only corrections (numbered), the best one pre-selected, then "Add … to the dictionary"
@@ -278,6 +280,30 @@ try {
       report(again === items[1], "z= remembers the fix you took", JSON.stringify({ took: items[1], now: again }));
     }
     await ev(`(()=>{const p=app.plugins.plugins["vim-extras"],b=${before};if(b)p.picks["mondz"]=b;else delete p.picks["mondz"];return p.saveSettings()})()`);
+  }
+  // the model: built in the worker, saved, loaded back; the words around a typo count
+  if (wordList) {
+    const HELP = "zz-vim-extras-context.md";
+    const t = await ev(`(async()=>{const p=app.plugins.plugins["vim-extras"];await p.rebuildModel();await p.loadModel();
+      const st=await app.vault.adapter.stat(p.modelPath());return JSON.stringify({...p.timings,size:st&&st.size,words:p.model&&p.model.size})})()`).then(JSON.parse);
+    report(t.build > 0 && t.size > 1000 && t.words > 1000 && t.load < 100, `model: built in ${Math.round(t.build)} ms (worker), ${(t.size / 1048576).toFixed(1)} MB, loaded back in ${t.load.toFixed(1)} ms (limit 100)`, JSON.stringify(t));
+    report(t.onload < 20, `startup: the plugin's onload takes ${t.onload.toFixed(1)} ms (limit 20); the model comes later, when idle`, JSON.stringify(t));
+    // earlier cases took monde for mond, and a fix you took comes first: set those picks aside
+    const picked = await ev(`(()=>{const p=app.plugins.plugins["vim-extras"],b=JSON.stringify(p.picks["mond"]||null);delete p.picks["mond"];return b})()`);
+    await ev(`app.vault.create("${HELP}", "au sommet du mont blanc\\n".repeat(4))`);
+    await sleep(2500); // the edit is counted 1.5 s after it
+    await typeIn("on monte au sommet du mond blanc ce matin ");
+    await sleep(WARM);
+    await keys("0");
+    await ev(`(()=>{const e=app.workspace.activeEditor.editor;e.setCursor({line:0,ch:e.getLine(0).indexOf("mond")})})()`);
+    await keys("z=");
+    await sleep(400);
+    const got = clean(await menu()).map(x => x.replace(/^\d+\s+/, ""));
+    await keys("<Esc>");
+    const why = await ev(`(()=>{const m=app.plugins.plugins["vim-extras"].model,id=w=>m.id(w);return JSON.stringify({duMont:m.pair(id("du"),id("mont")),montBlanc:m.pair(id("mont"),id("blanc"))})})()`);
+    report(got[0] === "mont", "z= weighs the words around: du [mond] blanc → mont (alone it would be monde)", JSON.stringify(got.slice(0, 4)) + " " + why);
+    await ev(`(async()=>{const f=app.vault.getAbstractFileByPath("${HELP}");if(f)await app.vault.delete(f)})()`);
+    await ev(`(()=>{const p=app.plugins.plugins["vim-extras"],b=${picked};if(b)p.picks["mond"]=b;return p.saveSettings()})()`);
   }
   report((await ev(`app.workspace.getActiveFile()?.path`)) === NOTE, "never left the scratch note", "");
 } catch (e) {

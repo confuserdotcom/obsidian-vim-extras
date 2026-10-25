@@ -31,6 +31,7 @@ It gathers every spelling one edit away (plus any accents: `theoreme` → `théo
 - **how common the word is**, from your word lists (below): `mond` → `monde` before `mont` or `gond`;
 - **the language of the paragraph** (below): in an English paragraph `theorme` → `theorem`, in a French one `théorème`;
 - **your notes**: words you use often rank higher, so terms missing from any list (`surjective`, `Cauchy`) are known;
+- **the words around it**: how often your notes have each fix next to the word before and the word after: `du mond blanc` → `mont`, `le mond entier` → `monde`;
 - **your picks**: the fix you take for a typo comes first next time.
 
 The typo's capitals are kept (`Bonjuor` → `Bonjour`).
@@ -47,7 +48,16 @@ With lists of two or more languages:
 
 Which words get underlined is still up to the system spellchecker, which accepts every language it has: a French word in an English note is not underlined, it is only never offered as a fix. On macOS the system checks every language you have, so it may take a word of another language as correct (`helo`, `mond`).
 
-**Learn from your notes** (on by default) counts the words of your notes and remembers the fixes you take, in the plugin's own data; the button next to it forgets the picks.
+**Learn from your notes** (on by default) counts the words of your notes and which words follow which, and remembers the fixes you take, in the plugin's own data; the button next to it forgets the picks.
+
+### Fast at startup
+
+What `z=` knows (the word lists, your notes' words and word pairs) is compiled into one file, `model.bin` in the plugin folder: sorted tables and typed arrays, searched in place.
+
+- **Startup**: the plugin's `onload` does no spelling work. Once Obsidian is idle, it reads `model.bin` and takes views on its bytes, without parsing lists or building tables: about 1 ms to decode, 8–16 ms with the disk read, measured on 150 000 words and 800 notes. Only the notes changed since the last session are read again.
+- **Edits**: a note you change is counted again a moment after you stop typing: its old words and pairs out, the new ones in (0.1 ms for a typical note). New words go to a small layer next to the tables, saved with them when idle.
+- **Full rebuilds** (first run, other word lists, many notes changed while closed) run in a background worker, off the editor's thread: about 0.7 s for that vault. **Rebuild the spelling model** forces one.
+- `model.bin` is a cache of this device: keep it out of sync (Syncthing, Obsidian Sync, git); each device builds its own.
 
 The three commands (**Spelling suggestions**, **Add word to dictionary**, **Remove word from dictionary**) also work from the command palette.
 
@@ -101,11 +111,14 @@ node e2e.mjs           # real key presses in a running Obsidian (see the header 
 node e2e-isolated.mjs  # the same in a separate Obsidian with a throwaway vault (macOS)
 ```
 
-`tools/eval.js` measures how often `z=` puts the right fix first, against release 1.0.0, on real typos mined from a vault's git history (`tools/mine-typos.py`) and on synthetic ones:
+`tools/eval.js` measures how often `z=` puts the right fix first, against releases 1.0.0 and 1.1.0, on real typos mined from a vault's git history (`tools/mine-typos.py`) and on synthetic ones:
 
 ```sh
 node tools/eval.js <vault> tools/typos.json fr_50k.txt en_50k.txt
+node --expose-gc tools/bench.js <vault> fr_50k.txt en_50k.txt   # build, size, load, edit, save, z=
 ```
+
+`npm test` also checks that the incremental path lands exactly where a full rebuild does (200 random runs of notes edited, deleted and renamed), and that the worker's source builds the very same bytes.
 
 ## License
 

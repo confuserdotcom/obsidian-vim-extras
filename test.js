@@ -1,7 +1,7 @@
 // Unit tests for the pure parts of the spelling keys:  node test.js
 // (e2e.mjs checks the real keys and the real spellchecker inside Obsidian.)
 const assert = require("assert");
-const { tokens, nextBad, wordAt, distance, neighbours, edits1, accents, candidates, parseList, listName, sameLang, makeLists, lexicon, nearWords, detectLang, rankFixes, matchCase, cleanSettings } = require("./main.js").core;
+const { tokens, nextBad, wordAt, distance, neighbours, edits1, accents, candidates, parseList, listName, sameLang, makeLists, buildModel, decodeModel, workerSource, nearWords, detectLang, rankFixes, around, matchCase, cleanSettings } = require("./main.js").core;
 
 const at = (line, ch) => ({ line, ch });
 const L = s => s.split("\n");
@@ -81,9 +81,10 @@ t("candidates: one-edit and accent spellings, no duplicates", () => {
 const fr = { path: "w/fr_50k.txt", text: "de 900\nle 800\nmonde 300\nmont 40\nthéorème 20\nthéorie 30\nfonction 50\nest 700" };
 const en = { path: "w/en_50k.txt", text: "the 900\nof 800\nis 700\nmind 200\nhello 300\nhole 50\ntheorem 20\nfunction 60\nmonde 1" };
 const lists = makeLists([fr, en]);
-const lex = lexicon(lists, new Map([["surjective", { count: 12, form: "surjective" }], ["cauchy", { count: 9, form: "Cauchy" }]]));
-const ctx = (lang, picks = {}) => ({ lex, lang, near: neighbours("qwerty"), picks });
-const fixesOf = (typo, lang, picks) => rankFixes(typo, [...nearWords(typo, lex), "mound"], ctx(lang, picks));
+const notes = [{ path: "a.md", mtime: 1, text: "surjective\n".repeat(12) + "Cauchy\n".repeat(9) }];
+const model = decodeModel(buildModel({ lists: [fr, en], notes }));
+const ctx = (lang, picks = {}, prev = -1, next = -1) => ({ model, lang, near: neighbours("qwerty"), picks, prev, next });
+const fixesOf = (typo, lang, picks) => rankFixes(typo, [...nearWords(typo, model), "mound"], ctx(lang, picks));
 t("parseList: counts, plain words count 1, comments skipped", () => {
   const l = parseList("monde 300\nMot\n# note\n\n");
   assert.deepStrictEqual([...l.freq], [["monde", 300], ["mot", 1]]);
@@ -99,17 +100,18 @@ t("makeLists merges the files of one language", () => {
   assert(m[0].freq.get("chose") === 1 && m[0].freq.get("monde") === 300);
 });
 t("nearWords: accents for free plus one edit, from the lists and the vault", () => {
-  const n = nearWords("theoreme", lex);
+  const n = nearWords("theoreme", model);
   assert(n.includes("théorème"), JSON.stringify(n));
-  assert(nearWords("surjectve", lex).includes("surjective"));
-  assert(nearWords("cauhy", lex).includes("Cauchy"), "keeps the vault spelling");
+  assert(nearWords("surjectve", model).includes("surjective"));
+  assert(nearWords("cauhy", model).includes("Cauchy"), "keeps the vault spelling");
 });
 t("detectLang: the paragraph's language, null when unclear", () => {
-  assert.strictEqual(detectLang(["the", "theorem", "is"], lists), "en");
-  assert.strictEqual(detectLang(["le", "théorème", "est", "de"], lists), "fr");
-  assert.strictEqual(detectLang(["the"], lists), null, "one word is not enough");
-  assert.strictEqual(detectLang(["the", "of", "le", "de"], lists), null, "a tie");
-  assert.strictEqual(detectLang(["x"], lists.slice(0, 1)), "fr", "one list: always it");
+  assert.strictEqual(detectLang(["the", "theorem", "is"], model), "en");
+  assert.strictEqual(detectLang(["le", "théorème", "est", "de"], model), "fr");
+  assert.strictEqual(detectLang(["the"], model), null, "one word is not enough");
+  assert.strictEqual(detectLang(["the", "of", "le", "de"], model), null, "a tie");
+  assert.strictEqual(detectLang(["x"], decodeModel(buildModel({ lists: [fr] }))), "fr", "one list: always it");
+  assert.strictEqual(detectLang(["the", "of"], null), null, "no model yet");
 });
 t("distance: the key next door and a doubled letter cost less", () => {
   const near = neighbours("qwerty");
@@ -133,7 +135,101 @@ t("rank: one spelling per word, never the typo itself", () => {
   assert.deepStrictEqual(r, ["monde", "mind"]);
 });
 t("rank: no lists at all still ranks by closeness", () =>
-  assert.strictEqual(rankFixes("helo", ["hole", "hello", "help"], { lex: lexicon(), lang: null, near: null, picks: {} })[0], "hello"));
+  assert.strictEqual(rankFixes("helo", ["hole", "hello", "help"], { model: null, lang: null, near: null, picks: {} })[0], "hello"));
+
+// ─── context: the words around the typo ───
+{
+  const lst = [{ path: "fr.txt", text: "monde 300\nmont 280\nle 900\ndu 800\nblanc 50" }];
+  const m = decodeModel(buildModel({ lists: lst, notes: [{ path: "n.md", mtime: 1, text: "au sommet du mont blanc\n".repeat(4) + "le monde\n" } ] }));
+  const c = (prev, next) => ({ model: m, lang: "fr", near: neighbours("qwerty"), picks: {}, prev: prev ? m.id(prev) : -1, next: next ? m.id(next) : -1 });
+  t("context: alone, the common word (mond → monde)", () => assert.strictEqual(rankFixes("mond", ["monde", "mont"], c())[0], "monde"));
+  t("context: after du, before blanc → mont", () => {
+    assert.strictEqual(rankFixes("mond", ["monde", "mont"], c("du"))[0], "mont");
+    assert.strictEqual(rankFixes("mond", ["monde", "mont"], c(null, "blanc"))[0], "mont");
+  });
+  t("context: around() takes the words on the same line only", () => {
+    const toks = tokens(["le mond est", "beau"]);
+    assert.deepStrictEqual(around(toks, 0, 3), { prev: "le", next: "est" });
+    assert.deepStrictEqual(around(toks, 0, 8), { prev: "mond", next: undefined });
+  });
+}
+
+// ─── the model file ───
+const snapshot = m => {
+  const words = new Set([...m.allWords()].filter(w => m.count(m.id(w)) || m.inLists(m.id(w))));
+  const out = { files: [...m.files.keys()].sort(), counts: {}, pairs: {}, near: {}, freq: {} };
+  for (const w of words) {
+    const id = m.id(w);
+    out.counts[w] = m.count(id);
+    out.freq[w] = m.langs.map((l, i) => m.freq(i, id)).join(",");
+    out.near[w] = m.near(w.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase()).sort().join(",");
+    for (const v of words) { const p = m.pair(id, m.id(v)); if (p) out.pairs[w + " " + v] = p; }
+  }
+  for (const k of Object.keys(out.counts)) if (!out.counts[k] && out.freq[k].split(",").every(x => x === "0")) delete out.counts[k];
+  return out;
+};
+t("model: encode → decode gives the same model, also after edits", () => {
+  const m = decodeModel(buildModel({ lists: [fr, en], notes: [{ path: "a.md", mtime: 1, text: "le monde est grand\nthe mind is" }] }));
+  m.update("b.md", 2, "un mot tout neuf, le monde");
+  const again = decodeModel(m.encode());
+  assert.deepStrictEqual(snapshot(again), snapshot(m));
+  assert.strictEqual(again.pair(again.id("le"), again.id("monde")), 2);
+  assert(!m.dirty, "encode clears dirty");
+});
+t("model: no lists, no notes → an empty model that still works", () => {
+  const m = decodeModel(buildModel({}));
+  assert.strictEqual(m.size, 0);
+  assert.deepStrictEqual(nearWords("mond", m), []);
+  m.update("a.md", 1, "bonjour le monde");
+  assert.strictEqual(m.count(m.id("monde")), 1);
+});
+t("model: a word shows in lower case if your notes ever write it so, else its commonest spelling", () => {
+  const m = decodeModel(buildModel({ notes: [{ path: "a.md", mtime: 1, text: "Le monde. le monde\nCauchy Cauchy CAUCHY\nMONTAGNE" }] }));
+  assert.strictEqual(m.form(m.id("le")), "le");
+  assert.strictEqual(m.form(m.id("cauchy")), "Cauchy");
+  assert.strictEqual(m.form(m.id("montagne")), "MONTAGNE");
+  m.update("b.md", 2, "CAUCHY CAUCHY CAUCHY");
+  assert.strictEqual(m.form(m.id("cauchy")), "CAUCHY", "the commonest wins");
+  m.remove("b.md");
+  assert.strictEqual(m.form(m.id("cauchy")), "Cauchy", "and goes back when the note goes");
+});
+t("model: a damaged or foreign file is refused", () => {
+  assert.throws(() => decodeModel(new ArrayBuffer(4)));
+  assert.throws(() => decodeModel(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]).buffer));
+});
+// The incremental path must land exactly where a full build would: random notes, random edits,
+// deletes and renames, then the model compared with one built from scratch on the final notes.
+t("model: incremental updates = a full rebuild (200 random runs)", () => {
+  let seed = 42; // mulberry32: 32-bit integer maths, every bit random
+  const rnd = n => { let x = (seed = (seed + 0x6d2b79f5) | 0); x = Math.imul(x ^ (x >>> 15), x | 1); x ^= x + Math.imul(x ^ (x >>> 7), x | 61); return ((x ^ (x >>> 14)) >>> 0) % n; };
+  const VOC = ["le", "Le", "monde", "Mont", "mont", "blanc", "du", "théorème", "the", "mind", "is", "Cauchy", "suite", "suites", "zorg", "x", "MONTAGNE", "Montagne", "montagne"];
+  const text = () => Array.from({ length: 1 + rnd(4) }, () => Array.from({ length: rnd(8) }, () => VOC[rnd(VOC.length)]).join(" ")).join("\n");
+  for (let run = 0; run < 200; run++) {
+    const notes = new Map();
+    for (let i = 0; i < 1 + rnd(5); i++) notes.set(`n${i}.md`, text());
+    const m = decodeModel(buildModel({ lists: [fr, en], notes: [...notes].map(([path, t]) => ({ path, mtime: 1, text: t })) }));
+    for (let op = 0; op < 1 + rnd(12); op++) {
+      const paths = [...notes.keys()], kind = rnd(4);
+      if (kind === 0 || !paths.length) { const p = `new${op}.md`; notes.set(p, text()); m.update(p, 2, notes.get(p)); }
+      else if (kind === 1) { const p = paths[rnd(paths.length)]; notes.set(p, text()); m.update(p, 3, notes.get(p)); }
+      else if (kind === 2) { const p = paths[rnd(paths.length)]; notes.delete(p); m.remove(p); }
+      else { const p = paths[rnd(paths.length)], q = `moved${op}.md`; notes.set(q, notes.get(p)); notes.delete(p); m.rename(p, q); }
+    }
+    const fresh = decodeModel(buildModel({ lists: [fr, en], notes: [...notes].map(([path, t]) => ({ path, mtime: 1, text: t })) }));
+    assert.deepStrictEqual(snapshot(m), snapshot(fresh), `run ${run}`);
+    assert.deepStrictEqual(snapshot(decodeModel(m.encode())), snapshot(fresh), `run ${run}, saved and loaded`);
+    assert([...m.extraPairs.values()].every(v => v > 0) && [...m.spelled.values()].every(v => v > 0), `run ${run}: no empty entries left behind`);
+  }
+});
+t("worker: its source builds the very same bytes as buildModel", () => {
+  const vm = require("vm"), input = { lists: [fr, en], notes, sig: "s" };
+  let got = null;
+  const box = { TextEncoder, TextDecoder, Map, Set, Uint32Array, Float64Array, Uint8Array, DataView, JSON, Math, Number, String, Object, Array, postMessage: b => (got = b), onmessage: null };
+  vm.runInNewContext(workerSource(), box);
+  box.onmessage({ data: input });
+  assert(got && !got.error, got && got.error);
+  assert.deepStrictEqual(Buffer.from(got), Buffer.from(buildModel(input)));
+});
 t("matchCase: Capitalised and ALL CAPS follow the typo", () => {
   assert.strictEqual(matchCase("Bonjuor", "bonjour"), "Bonjour");
   assert.strictEqual(matchCase("MOND", "monde"), "MONDE");
