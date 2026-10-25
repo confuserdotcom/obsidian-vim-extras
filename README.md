@@ -1,0 +1,83 @@
+# Vim Extras
+
+Three small additions to [Obsidian](https://obsidian.md)'s Vim mode, each with its own switch in the settings:
+
+- **Spelling keys**: `]s` `[s` `z=` `zg` `zw`, like Vim's, on Obsidian's own spellchecker.
+- **Screen-row numbers**: relative numbers that count what `gj` and `gk` really move by on wrapped lines, also beside rendered maths.
+- **Ctrl-N / Ctrl-P in menus**: move the selection in Obsidian's menus, like in the quick switcher.
+
+Requires Vim mode: Obsidian's built-in **Settings → Editor → Vim key bindings**, or the [Vim Motions](https://github.com/saberzero1/obsidian-vim-motions) plugin. Desktop only (the spellchecker is Electron's).
+
+## Spelling keys
+
+| Keys | What they do |
+| --- | --- |
+| `]s` `[s` | next / previous misspelled word; counts (`3]s`), operators (`d]s`) and visual mode work; wraps around the note like Vim |
+| `z=` | fixes for the word under the cursor: `1`–`9` picks one, `Ctrl-N` / `Ctrl-P` + `Enter` too, `Esc` cancels |
+| `3z=` | take fix 3 straight away (`1z=` = the best one) |
+| `zg` | add the word to the dictionary |
+| `zw` `zug` | take it back out |
+
+- Only prose is checked: maths (`$…$`, `$$…$$`), code, frontmatter, links and their targets, URLs, file names, tags, comments, HTML, LaTeX commands, one-letter words and short ALL-CAPS acronyms are skipped.
+- It uses the languages in **Settings → Editor → Spellcheck**, and `zg` / `zw` write to the same dictionary as the editor's right-click menu.
+- `z=` ranks every one-edit and accent spelling the dictionary accepts (`theoreme` → `théorème`) together with Chromium's own suggestions, by an accent-aware edit distance, and keeps the typo's capitals (`Bonjuor` → `Bonjour`).
+- Fast: the open note is checked and its fixes worked out while you pause, so `]s` and `z=` only read caches.
+- **Own underline** (on by default) underlines the misspelled words the way `]s` sees them: the whole note at once, never inside maths or code. It hides the built-in underline in the editor.
+- The fixes are only as good as the system spellchecker: on macOS it checks every language you have, so it can take a word from another language as correct (`helo`, `mond`). The word list below fixes the order for your main language.
+- **Preferred word list** (optional): with two languages on, the spellchecker accepts a word without saying which language it comes from, so `mond` could become `monde` or `mound`. Point this setting at a file in your vault with one word per line (a word list of your main language) and, when two fixes are as close, `z=` puts the one in the list first.
+
+The three commands (**Spelling suggestions**, **Add word to dictionary**, **Remove word from dictionary**) also work from the command palette.
+
+## Screen-row numbers
+
+Notes wrap, so most people in Obsidian move with `gj` / `gk` (or map `j` / `k` to them): `5gj` goes 5 screen rows down, and no line numbers say where that is. This draws a relative number on every screen row in the left margin:
+
+- the label on a row is exactly how many `gj` (or `gk`) land there; it comes from running Vim's own vertical motion, so rows beside rendered inline maths are skipped and a rendered `$$` block shows the count that reaches it, just like the cursor moves;
+- the cursor row shows its real line number (hybrid, like `set number relativenumber`);
+- it is drawn when the editor is idle, so holding `gj` stays smooth.
+
+The numbers sit in the margin left of the text: turn on **Settings → Editor → Readable line length** so there is room. **Toggle screen-row numbers** is a command, to bind to a key. Resize them with a CSS snippet:
+
+```css
+body { --vim-extras-row-size: 19px; --vim-extras-row-cur-size: 21px; }
+```
+
+## Ctrl-N / Ctrl-P in menus
+
+The quick switcher and the other suggesters already take `Ctrl-N` / `Ctrl-P`; menus (right-click menu, file menu, the `z=` list…) only took the arrow keys, and `Ctrl-N` fell through to **Create new note**. Now they move the selection. Needs **Settings → Appearance → Native menus** off: native menus are drawn by the system and never see the keys.
+
+## vimrc
+
+The spelling keys need counts, so they are plain Vim keys, not commands: don't map `z=` or `]s` in your vimrc, a map would shadow them. To bind the row numbers toggle, with [Vim Motions](https://github.com/saberzero1/obsidian-vim-motions):
+
+```vim
+nnoremap <leader>tn :obcommand vim-extras:toggle-row-numbers<CR>
+```
+
+With [Vimrc Support](https://github.com/esm7/obsidian-vimrc-support):
+
+```vim
+exmap rownumbers obcommand vim-extras:toggle-row-numbers
+nmap <Space>tn :rownumbers<CR>
+```
+
+## Install
+
+Until it is in the community plugins list, either:
+
+- use [BRAT](https://github.com/TfTHacker/obsidian42-brat): add `confuserdotcom/obsidian-vim-extras`, or
+- download `main.js`, `manifest.json` and `styles.css` from the [latest release](https://github.com/confuserdotcom/obsidian-vim-extras/releases/latest) into `<vault>/.obsidian/plugins/vim-extras/`, then enable **Vim Extras** in Settings → Community plugins.
+
+## Development
+
+No build step: `main.js` is the plugin.
+
+```sh
+npm test               # unit tests for the spelling keys
+node e2e.mjs           # real key presses in a running Obsidian (see the header of e2e.mjs)
+node e2e-isolated.mjs  # the same in a separate Obsidian with a throwaway vault (macOS)
+```
+
+## License
+
+[MIT](LICENSE)

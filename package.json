@@ -1,0 +1,13 @@
+{
+  "name": "obsidian-vim-extras",
+  "version": "1.0.0",
+  "description": "Spelling keys for Vim mode, screen-row numbers that count what j and k move by, and Ctrl-N / Ctrl-P in menus, for Obsidian.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "test": "node test.js",
+    "e2e": "node e2e.mjs"
+  },
+  "author": "confuserdotcom",
+  "license": "MIT"
+}

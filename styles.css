@@ -1,0 +1,19 @@
+/* Spelling: with "Own underline" on, the misspelled words get this underline (same rules as
+   ]s: nothing in maths or code), so the built-in one is hidden in the editor. */
+body.vim-extras-underline .markdown-source-view .cm-content ::spelling-error { text-decoration: none; }
+body.vim-extras-underline .vim-extras-bad {
+  text-decoration: underline wavy rgb(var(--color-red-rgb, 233, 49, 71));
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+
+/* Screen-row numbers, in the margin left of the text. Themes and snippets can resize them with
+   --vim-extras-row-size and --vim-extras-row-cur-size. */
+.vim-extras-rows { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 2; }
+.vim-extras-rows div {
+  position: absolute; right: 0; display: flex; align-items: center; justify-content: flex-end;
+  font-family: var(--font-monospace); font-size: var(--vim-extras-row-size, 0.9em); font-variant-numeric: tabular-nums;
+  color: var(--text-faint); white-space: nowrap;
+}
+.vim-extras-rows div.vim-extras-row-cur { color: var(--text-accent); font-weight: 700; font-size: var(--vim-extras-row-cur-size, 1em); }
+body.vim-extras-rows-off .vim-extras-rows { display: none; }
