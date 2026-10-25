@@ -20,7 +20,7 @@
 // units CodeMirror and Obsidian use).
 
 const obsidian = (() => { try { return require("obsidian"); } catch { return {}; } })(); // node tests
-const { Plugin = class {}, PluginSettingTab = class {}, Setting = class {}, Notice = class { constructor(m) { console.log(m); } }, Menu } = obsidian;
+const { Plugin = class {}, PluginSettingTab = class {}, Setting = class {}, Notice = class { constructor(m) { console.log(m); } }, Menu, FuzzySuggestModal = class {} } = obsidian;
 const cm6 = name => { try { return require(name); } catch { return null; } }; // null under node
 const CMState = cm6("@codemirror/state"), CMView = cm6("@codemirror/view");
 
@@ -122,24 +122,42 @@ function wordAt(lines, pos) {
 // ─── Ranking suggestions ───────────────────────────────────────────────────────
 const base = c => c.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 const joiner = c => c === " " || c === "-" || c === "'" || c === "’";
-// Accent-aware Damerau-Levenshtein: case = 0.05, accent = 0.2, a missing letter = 0.9 (typos
+
+// Keyboard neighbours: hitting the key next door is the commonest typo, so it costs less.
+const ROWS = { qwerty: ["qwertyuiop", "asdfghjkl", "zxcvbnm"], azerty: ["azertyuiop", "qsdfghjklm", "wxcvbn"], qwertz: ["qwertzuiop", "asdfghjkl", "yxcvbnm"] };
+function neighbours(layout) {
+  const at = new Map(), out = new Map();
+  (ROWS[layout] || ROWS.qwerty).forEach((row, y) => [...row].forEach((c, x) => at.set(c, [x + y * 0.5, y]))); // rows are staggered
+  for (const [c, [x, y]] of at) out.set(c, new Set([...at].filter(([d, [u, v]]) => d !== c && Math.abs(v - y) <= 1 && Math.abs(u - x) <= 1).map(([d]) => d)));
+  return out;
+}
+
+// Accent-aware Damerau-Levenshtein: case = 0.05, accent = 0.2, a doubled letter added or
+// dropped = 0.5 (problemme, aparaitre), the key next door = 0.6, a missing letter = 0.9 (typos
 // drop letters more than they add them), splitting a word = 1.5, anything else = 1.
-function distance(a, b) {
-  const x = [...a], y = [...b];
+function distance(a, b, near = null) {
+  const x = [...a], y = [...b], bx = x.map(base), by = y.map(base);
   const d = Array.from({ length: x.length + 1 }, () => new Array(y.length + 1).fill(0));
-  const del = c => (joiner(c) ? 1.5 : 1), ins = c => (joiner(c) ? 1.5 : 0.9);
-  const sub = (p, q) => (p === q ? 0 : p.toLowerCase() === q.toLowerCase() ? 0.05 : base(p) === base(q) ? 0.2 : 1);
-  for (let i = 1; i <= x.length; i++) d[i][0] = d[i - 1][0] + del(x[i - 1]);
-  for (let j = 1; j <= y.length; j++) d[0][j] = d[0][j - 1] + ins(y[j - 1]);
+  const del = i => (joiner(x[i]) ? 1.5 : bx[i] === bx[i - 1] || bx[i] === bx[i + 1] ? 0.5 : 1);
+  const ins = j => (joiner(y[j]) ? 1.5 : by[j] === by[j - 1] || by[j] === by[j + 1] ? 0.5 : 0.9);
+  const sub = (i, j) => {
+    const p = x[i], q = y[j];
+    if (p === q) return 0;
+    if (p.toLowerCase() === q.toLowerCase()) return 0.05;
+    if (bx[i] === by[j]) return 0.2;
+    return near && near.has(bx[i]) && near.get(bx[i]).has(by[j]) ? 0.6 : 1;
+  };
+  for (let i = 1; i <= x.length; i++) d[i][0] = d[i - 1][0] + del(i - 1);
+  for (let j = 1; j <= y.length; j++) d[0][j] = d[0][j - 1] + ins(j - 1);
   for (let i = 1; i <= x.length; i++) for (let j = 1; j <= y.length; j++) {
-    d[i][j] = Math.min(d[i - 1][j] + del(x[i - 1]), d[i][j - 1] + ins(y[j - 1]), d[i - 1][j - 1] + sub(x[i - 1], y[j - 1]));
+    d[i][j] = Math.min(d[i - 1][j] + del(i - 1), d[i][j - 1] + ins(j - 1), d[i - 1][j - 1] + sub(i - 1, j - 1));
     if (i > 1 && j > 1 && x[i - 1] === y[j - 2] && x[i - 2] === y[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
   }
   return Math.round(d[x.length][y.length] * 1000) / 1000;
 }
 
 // Plain letters only: accents get their own, much smaller pass (accents), which cuts the
-// spellings to check by ~40 % (each check costs 0.1–0.25 ms).
+// spellings to check by ~40 % (each check costs 0.06–2 ms).
 const LETTERS = [..."abcdefghijklmnopqrstuvwxyz"];
 // Every word one edit away (the dictionary then keeps the real ones).
 function edits1(word) {
@@ -174,26 +192,104 @@ function accents(word) {
 // Spellings worth asking the dictionary about.
 const candidates = word => [...new Set([...edits1(word), ...accents(word)])];
 
-// lists: [{src, list}] with src "primary" (in the preferred word list) | "both" (Chromium's
-// own suggestions) | "edits" (the other near spellings) | "other". Closest first; ties go to
-// the source order above.
-const PENALTY = { primary: 0, edits: 0.05, both: 0.1, other: 0.3 };
-function rank(word, lists, max = 9) {
-  const score = new Map();
-  for (const { src, list } of lists) list.forEach((s, i) => {
-    if (s === word) return;
-    const v = distance(word, s) + (PENALTY[src] ?? 0.1) + i * 0.001;
-    if (!score.has(s) || v < score.get(s)) score.set(s, v);
-  });
-  return [...score].sort((p, q) => p[1] - q[1]).slice(0, max).map(p => p[0]);
+// ─── Word lists and the vault's own words ──────────────────────────────────────
+// A word list: one word per line, optionally followed by how common it is (a frequency list
+// such as FrequencyWords' fr_50k.txt: "monde 277005"); a plain list counts 1 per word.
+function parseList(text) {
+  const freq = new Map();
+  let total = 0;
+  for (const line of text.split(/\r?\n/)) {
+    const [w, n] = line.trim().split(/\s+/);
+    if (!w || w.startsWith("#")) continue;
+    const k = w.toLowerCase(), c = Number(n) || 1;
+    freq.set(k, Math.max(freq.get(k) || 0, c));
+    total += c;
+  }
+  return { freq, total: total || 1 };
+}
+// The language a list is for, from its file name: fr_50k.txt → fr, english.txt → english.
+const listName = path => (path.split("/").pop().match(/^[\p{L}]+/u) || ["words"])[0].toLowerCase();
+// Same language: fr = french = fr-FR (the first two letters).
+const sameLang = (a, b) => !!a && !!b && a.slice(0, 2).toLowerCase() === b.slice(0, 2).toLowerCase();
+
+// One list per language: files of the same language (fr_50k.txt and french.txt) are merged.
+// files: [{path, text}] → [{name, freq, total}]
+function makeLists(files) {
+  const out = [];
+  for (const { path, text } of files) {
+    const name = listName(path), l = parseList(text), same = out.find(o => sameLang(o.name, name));
+    if (!same) { out.push({ name, ...l }); continue; }
+    for (const [w, c] of l.freq) same.freq.set(w, Math.max(same.freq.get(w) || 0, c));
+    same.total += l.total;
+  }
+  return out;
 }
 
-// The spellchecker accepts a word in any of its languages without saying which one, so on a
-// tie (mond → monde or mound) the preferred word list decides: one word per line, a trailing
-// s counts too (a plural).
-const wordListOf = set => w => { const l = w.toLowerCase(); return set.has(l) || set.has(w) || (/s$/.test(l) && set.has(l.slice(0, -1))); };
-const byLanguage = (good, isPreferred) => [{ src: "primary", list: good.filter(isPreferred) }, { src: "edits", list: good.filter(w => !isPreferred(w)) }];
-let isPreferred = () => false;
+// lists: [{name, freq, total}]; vault: Map(lower case → {count, form}), the words of your notes.
+// index: spelling without accents or capitals → the real spellings, so a typo's near words
+// come from map lookups (theoreme, aparaitre → théorème, apparaître) instead of spellchecker
+// calls.
+const VAULT_MIN = 3; // a word used this often in your notes counts as one of yours
+function lexicon(lists = [], vault = new Map()) {
+  const index = new Map();
+  const add = w => { const b = base(w); if (!index.has(b)) index.set(b, new Set()); index.get(b).add(w); };
+  for (const l of lists) for (const w of l.freq.keys()) add(w);
+  for (const v of vault.values()) if (v.count >= VAULT_MIN) add(v.form);
+  return { lists, vault, index };
+}
+// The words of the lists and the vault that the typo is one edit (plus any accents) away from.
+function nearWords(word, lex) {
+  const out = new Set(), b = base(word);
+  for (const k of [b, ...edits1(b)]) for (const w of lex.index.get(k) || []) out.add(w);
+  out.delete(word);
+  return [...out];
+}
+
+// The language of some words: every word votes for the list where it is at least 10 times
+// more common (de, le, the …); null when too few votes or too close to tell.
+function detectLang(words, lists) {
+  if (lists.length < 2) return lists.length ? lists[0].name : null;
+  const votes = lists.map(() => 0);
+  for (const w of words) {
+    const k = w.toLowerCase(), share = lists.map(l => (l.freq.get(k) || 0) / l.total);
+    const order = share.map((p, i) => [p, i]).sort((a, b) => b[0] - a[0]);
+    if (order[0][0] > 0 && order[0][0] >= 10 * order[1][0]) votes[order[0][1]]++;
+  }
+  const best = votes.map((v, i) => [v, i]).sort((a, b) => b[0] - a[0]);
+  if (best[0][0] < 2 || best[0][0] < 2 * best[1][0]) return null;
+  return lists[best[0][1]].name;
+}
+
+// How good s is as the fix for the typo word (lower is better): closeness first, then how
+// common s is in the text's language, how often you use it in your notes, and whether you
+// picked it for this typo before. A word only in another language's list (a French fix in an
+// English paragraph) or in no list at all is pushed down.
+const WEIGHT = { freq: 0.12, otherLang: 0.6, unknown: 0.3, vault: 0.15, pick: 1.5 };
+function score(word, s, ctx) {
+  const { lex } = ctx, k = s.toLowerCase();
+  let v = distance(word, s, ctx.near);
+  const mine = ctx.lang ? lex.lists.filter(l => sameLang(l.name, ctx.lang)) : lex.lists;
+  const f = Math.max(0, ...mine.map(l => l.freq.get(k) || 0));
+  if (f) v -= WEIGHT.freq * Math.log10(1 + f);
+  else if (lex.lists.some(l => l.freq.has(k))) v += WEIGHT.otherLang;
+  else if (!lex.vault.has(k)) v += WEIGHT.unknown;
+  const own = lex.vault.get(k);
+  if (own) v -= WEIGHT.vault * Math.log10(1 + own.count);
+  const picked = ctx.picks && ctx.picks[word.toLowerCase()];
+  if (picked && picked[k]) v -= WEIGHT.pick + 0.2 * Math.min(picked[k], 5); // taken once: first next time
+  return v;
+}
+// ctx: {lex, lang, near, picks}. Best first, one spelling per word (Monde / monde).
+function rankFixes(word, cands, ctx, max = 9) {
+  const seen = new Set(), out = [];
+  for (const s of cands) {
+    const k = s.toLowerCase();
+    if (s === word || seen.has(k)) continue;
+    seen.add(k);
+    out.push([s, score(word, s, ctx)]);
+  }
+  return out.sort((p, q) => p[1] - q[1]).slice(0, max).map(p => p[0]);
+}
 
 // Bonjuor → Bonjour, MOND → MONDE; a suggestion with its own capitals (Cauchy) keeps them.
 function matchCase(orig, sug) {
@@ -204,7 +300,7 @@ function matchCase(orig, sug) {
 }
 
 // ─── Electron spellchecker ─────────────────────────────────────────────────────
-// Measured: isWordMisspelled ≈ 0.06–0.25 ms, getWordSuggestions ≈ 50–150 ms. So nothing slow
+// Measured: isWordMisspelled ≈ 0.06–2 ms, getWordSuggestions ≈ 10–150 ms. So nothing slow
 // happens on a key press: while you're idle, the open note's words are checked and the fixes
 // for each misspelled one worked out in small slices (warm), and ]s / z= read the caches.
 const electron = (() => { try { return require("electron"); } catch { return null; } })();
@@ -220,34 +316,40 @@ function isBad(word) {
   return cache.get(word);
 }
 
+// What the ranking knows, set by the plugin: the lexicon, the keyboard, your past picks.
+const know = { lex: lexicon(), near: neighbours("qwerty"), picks: {} };
+const ctxFor = lang => ({ ...know, lang });
+const fixKey = (word, lang) => (lang || "") + "|" + word;
+
 // The ranked fixes for a word, one step at a time (each yield = a chance to hand the thread
-// back): every one-edit / accent spelling the dictionary accepts, plus Chromium's own list.
-function* fixesJob(word) {
+// back): the near words of the lists and the vault, every one-edit / accent spelling the
+// dictionary accepts, plus Chromium's own list.
+function* fixesJob(word, lang) {
   const good = [];
+  for (const c of nearWords(word, know.lex)) { if (!isBad(c)) good.push(c); yield "check"; }
   for (const c of candidates(word)) { if (!isBad(c)) good.push(c); yield "check"; }
-  yield "suggest"; // the next step is one 50–250 ms call: the runner gives it a fresh idle slot
-  const chromium = webFrame.getWordSuggestions(word);
-  fixCache.set(word, rank(word, [...byLanguage(good, isPreferred), { src: "both", list: chromium }]));
+  yield "suggest"; // the next step is one 10–250 ms call: the runner gives it a fresh idle slot
+  good.push(...webFrame.getWordSuggestions(word));
+  fixCache.set(fixKey(word, lang), rankFixes(word, good, ctxFor(lang)));
 }
 // Right now (z= on a word the background hasn't reached yet). A check costs 0.06 ms on one
 // machine and 2 ms on another (macOS checking every language: ~700 spellings = 1.5 s), so the
-// near spellings get at most COLD_MS, accents first; the ones in the preferred word list are
-// words without asking. When all of them were checked and they give 3 fixes, Chromium's slow
+// near words of the lists come first (a few checks), then the other spellings get at most
+// COLD_MS, accents first. When all of them were checked and they give 3 fixes, Chromium's slow
 // list is skipped this once (where checks are slow, it is fast). Not cached: the background
 // works out the full list, so a z= a moment later shows it.
 const COLD_MS = 150;
-function fixes(word) {
-  if (fixCache.has(word)) return fixCache.get(word);
-  const cands = [...new Set([...accents(word), ...edits1(word)])];
-  const good = cands.filter(c => isPreferred(c)), end = Date.now() + COLD_MS;
+function fixes(word, lang) {
+  const key = fixKey(word, lang);
+  if (fixCache.has(key)) return fixCache.get(key);
+  const good = nearWords(word, know.lex).filter(c => !isBad(c)), end = Date.now() + COLD_MS;
   let all = true;
-  for (const c of cands) {
-    if (good.includes(c)) continue;
+  for (const c of new Set([...accents(word), ...edits1(word)])) {
     if (Date.now() > end) { all = false; break; }
     if (!isBad(c)) good.push(c);
   }
-  const lists = byLanguage(good, isPreferred);
-  return rank(word, all && good.length >= 3 ? lists : [...lists, { src: "both", list: webFrame.getWordSuggestions(word) }]);
+  if (!all || good.length < 3) good.push(...webFrame.getWordSuggestions(word));
+  return rankFixes(word, good, ctxFor(lang));
 }
 
 // ─── Underlines ────────────────────────────────────────────────────────────────
@@ -491,10 +593,13 @@ function patchMenus() {
 }
 
 // ═══ Plugin ══════════════════════════════════════════════════════════════════════
-const DEFAULTS = { spelling: true, underline: true, wordList: "", rowNumbers: true, menuKeys: true };
+const DEFAULTS = { spelling: true, underline: true, wordLists: "", learn: true, keyboard: "auto", rowNumbers: true, menuKeys: true };
+const KEYBOARDS = ["auto", "qwerty", "azerty", "qwertz"];
 const cleanSettings = s => {
   const out = { ...DEFAULTS };
+  if (s && typeof s.wordList === "string" && typeof s.wordLists !== "string") s = { ...s, wordLists: s.wordList }; // 1.0: one list
   for (const k of Object.keys(DEFAULTS)) if (s && typeof s[k] === typeof DEFAULTS[k]) out[k] = s[k];
+  if (!KEYBOARDS.includes(out.keyboard)) out.keyboard = "auto";
   return out;
 };
 
@@ -502,14 +607,29 @@ class VimExtras extends Plugin {
   async onload() {
     plugin = this;
     this.patched = [];
-    this.settings = cleanSettings(await this.loadData());
+    const data = await this.loadData();
+    this.settings = cleanSettings(data);
+    this.picks = know.picks = (data && data.picks && typeof data.picks === "object") ? data.picks : {};
+    this.lists = [];
+    this.vault = new Map();
     if (paintField) this.registerEditorExtension(paintField);
+    if (CMView) this.registerEditorExtension(CMView.EditorView.updateListener.of(u => { if (u.selectionSet) this.badgeSoon(); }));
     if (CMView) this.registerEditorExtension(CMView.ViewPlugin.fromClass(RowNumbers));
     this.app.workspace.onLayoutReady(() => { this.patchReloads(); this.applyKeys(); });
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => { this.patchReloads(); this.applyKeys(); }));
     const s = session();
     if (s) s.listWordsInSpellCheckerDictionary().then(ws => { for (const w of ws) added.add(w); }).catch(() => {});
-    this.app.workspace.onLayoutReady(() => this.loadWordList());
+    this.app.workspace.onLayoutReady(async () => { await this.detectKeyboard(); await this.loadLexicon(); this.learnVault(); });
+    // the language badge in the status bar: click to choose the note's language
+    this.badge = this.addStatusBarItem();
+    this.badge.addClass("vim-extras-lang", "mod-clickable");
+    this.badge.addEventListener("click", e => this.langMenu(e));
+    let badgeTimer = null;
+    this.badgeSoon = () => { clearTimeout(badgeTimer); badgeTimer = setTimeout(() => this.updateBadge(), 200); };
+    this.register(() => clearTimeout(badgeTimer));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", this.badgeSoon));
+    this.registerEvent(this.app.workspace.on("editor-change", this.badgeSoon));
+    this.registerEvent(this.app.metadataCache.on("changed", this.badgeSoon));
     // background: check the note and prepare the fixes whenever you pause
     let timer = null;
     this.soon = () => { clearTimeout(timer); timer = setTimeout(() => this.warm(), 150); };
@@ -520,12 +640,14 @@ class VimExtras extends Plugin {
     this.addCommand({ id: "suggest", name: "Spelling suggestions (z=)", editorCheckCallback: c => this.settings.spelling && (c || this.suggest(0), true) });
     this.addCommand({ id: "add-word", name: "Add word to dictionary (zg)", editorCheckCallback: c => this.settings.spelling && (c || this.dictionary(true), true) });
     this.addCommand({ id: "remove-word", name: "Remove word from dictionary (zw)", editorCheckCallback: c => this.settings.spelling && (c || this.dictionary(false), true) });
+    this.addCommand({ id: "note-language", name: "Set the spelling language of this note", checkCallback: c => !!(this.settings.spelling && this.lists.length && this.app.workspace.getActiveFile()) && (c || new LangModal(this.app, this).open(), true) });
     this.addCommand({ id: "toggle-row-numbers", name: "Toggle screen-row numbers", callback: () => { this.settings.rowNumbers = !this.settings.rowNumbers; this.saveSettings(); } });
     this.addSettingTab(new VimExtrasSettings(this.app, this));
     this.apply();
   }
 
   onunload() {
+    this.unloaded = true;
     unregister();
     if (this.unpatchMenus) this.unpatchMenus();
     if (this.idleId) cancelIdleCallback(this.idleId);
@@ -538,7 +660,7 @@ class VimExtras extends Plugin {
   async saveSettings() {
     this.settings = cleanSettings(this.settings);
     this.apply(); // before the write, so a toggle shows at once
-    await this.saveData(this.settings);
+    await this.saveData({ ...this.settings, picks: this.picks });
   }
   // Puts every feature in the state the settings ask for; safe to call again.
   apply() {
@@ -551,21 +673,111 @@ class VimExtras extends Plugin {
     if (!s.menuKeys && this.unpatchMenus) { this.unpatchMenus(); this.unpatchMenus = null; }
     if (s.spelling && s.underline) this.soon && this.soon();
     else this.clearUnderlines();
+    if (this.badgeSoon) this.badgeSoon();
   }
   applyKeys() { if (this.settings.spelling) register(); else unregister(); }
 
-  async loadWordList() {
-    isPreferred = () => false;
-    fixCache.clear();
-    const path = this.settings.wordList.trim();
-    if (!path) return;
-    try {
-      const text = await this.app.vault.adapter.read(obsidian.normalizePath ? obsidian.normalizePath(path) : path);
-      isPreferred = wordListOf(new Set(text.split(/\r?\n/).map(w => w.trim()).filter(Boolean)));
-      fixCache.clear();
-    } catch (e) {
-      new Notice(`Vim Extras: couldn't read the word list “${path}”`);
+  // ─── What the ranking knows ───
+  async loadLexicon() {
+    const files = [];
+    for (const path of this.settings.wordLists.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
+      try {
+        files.push({ path, text: await this.app.vault.adapter.read(obsidian.normalizePath ? obsidian.normalizePath(path) : path) });
+      } catch (e) {
+        new Notice(`Vim Extras: couldn't read the word list “${path}”`);
+      }
     }
+    this.lists = makeLists(files);
+    this.rebuild();
+  }
+  // Your words: every word of your notes, counted in idle slices after startup.
+  async learnVault() {
+    const vault = new Map();
+    if (this.settings.learn) {
+      const files = this.app.vault.getMarkdownFiles();
+      for (let i = 0; i < files.length; i++) {
+        const text = await this.app.vault.cachedRead(files[i]);
+        for (const t of tokens(text.split("\n"))) {
+          const k = t.text.toLowerCase(), v = vault.get(k);
+          if (!v) vault.set(k, { count: 1, form: t.text });
+          else { v.count++; if (t.text === k) v.form = k; } // Le at a sentence start is le
+        }
+        if (i % 20 === 19) await new Promise(r => requestIdleCallback(r, { timeout: 500 }));
+        if (this.unloaded) return;
+      }
+    }
+    this.vault = vault;
+    this.rebuild();
+  }
+  rebuild() {
+    know.lex = lexicon(this.lists, this.vault);
+    fixCache.clear();
+    this.badgeSoon();
+    this.soon();
+  }
+  async detectKeyboard() {
+    let layout = this.settings.keyboard;
+    if (layout === "auto") {
+      layout = "qwerty";
+      try {
+        const map = await navigator.keyboard.getLayoutMap();
+        layout = map.get("KeyQ") === "a" ? "azerty" : map.get("KeyY") === "z" ? "qwertz" : "qwerty";
+      } catch (e) { /* no Keyboard API: qwerty */ }
+    }
+    this.layout = layout;
+    know.near = neighbours(layout);
+    fixCache.clear();
+  }
+  // Remember the fix you took for a typo: next time it comes first.
+  remember(typo, fix) {
+    if (!this.settings.learn) return;
+    const t = typo.toLowerCase(), f = fix.toLowerCase(), p = this.picks;
+    (p[t] = p[t] || {})[f] = (p[t][f] || 0) + 1;
+    const keys = Object.keys(p);
+    if (keys.length > 5000) delete p[keys[0]];
+    for (const k of [...fixCache.keys()]) if (k.endsWith("|" + typo)) fixCache.delete(k);
+    this.saveSettings();
+  }
+
+  // ─── Language ───
+  // The note's language from its frontmatter (lang: en), when it names one of the lists.
+  forcedLang(file = this.app.workspace.getActiveFile()) {
+    const fm = file && this.app.metadataCache.getFileCache(file)?.frontmatter;
+    const want = fm && (fm.lang || fm.language);
+    const l = want && this.lists.find(l => sameLang(l.name, String(want)));
+    return l ? l.name : null;
+  }
+  // The language at a line: the note's frontmatter, else the paragraph's words, else the note's.
+  langAt(text, line) {
+    if (!this.lists.length) return null;
+    const forced = this.forcedLang();
+    if (forced) return forced;
+    const toks = tokensOf(text), lines = text.split("\n");
+    let a = line, b = line;
+    while (a > 0 && lines[a - 1].trim()) a--;
+    while (b < lines.length - 1 && lines[b + 1].trim()) b++;
+    return detectLang(toks.filter(t => t.line >= a && t.line <= b).map(t => t.text), this.lists) || detectLang(toks.map(t => t.text), this.lists);
+  }
+  updateBadge() {
+    const editor = this.app.workspace.activeEditor && this.app.workspace.activeEditor.editor;
+    const show = !!(this.settings.spelling && this.lists.length > 1 && editor);
+    this.badge.toggle(show);
+    if (!show) return;
+    const forced = this.forcedLang(), lang = forced || this.langAt(editor.getValue(), editor.getCursor().line);
+    this.badge.setText(lang ? lang.slice(0, 2).toUpperCase() : "··");
+    this.badge.setAttr("aria-label", `Spelling: ${lang || "language unclear"} (${forced ? "set by the note" : "detected"}). Click to choose.`);
+    this.badge.toggleClass("is-forced", !!forced);
+  }
+  langMenu(e) {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) return;
+    const forced = this.forcedLang(file), menu = new Menu();
+    menu.addItem(i => i.setTitle("Detect per paragraph").setChecked(!forced).onClick(() => this.setNoteLang(file, null)));
+    for (const l of this.lists) menu.addItem(i => i.setTitle(l.name).setChecked(forced === l.name).onClick(() => this.setNoteLang(file, l.name)));
+    menu.showAtMouseEvent(e);
+  }
+  async setNoteLang(file, name) {
+    await this.app.fileManager.processFrontMatter(file, fm => { if (name) fm.lang = name; else { delete fm.lang; delete fm.language; } });
   }
 
   clearUnderlines() {
@@ -611,13 +823,18 @@ class VimExtras extends Plugin {
     const text = editor.getValue(), view = editor.cm, all = tokensOf(text);
     const toks = all.slice().sort((p, q) => Math.abs(p.line - row) - Math.abs(q.line - row));
     const words = [...new Set(toks.map(t => t.text))];
-    const underline = this.settings.underline;
+    const underline = this.settings.underline, self = this;
+    const lineOf = new Map(); // each word's occurrence nearest the cursor: its paragraph's language
+    for (const t of toks) if (!lineOf.has(t.text)) lineOf.set(t.text, t.line);
     this.job = (function* () {
       const bad = [];
       for (const w of words) { if (isBad(w)) bad.push(w); yield "check"; }
       // every word is checked: underline them (if the note is still the text we checked)
       if (underline && view && view.dom.isConnected && view.state.doc.toString() === text) paint(view, all);
-      for (const w of bad) if (!fixCache.has(w)) yield* fixesJob(w);
+      for (const w of bad) {
+        const lang = self.langAt(text, lineOf.get(w));
+        if (!fixCache.has(fixKey(w, lang))) yield* fixesJob(w, lang);
+      }
     })();
     this.idle();
   }
@@ -642,23 +859,27 @@ class VimExtras extends Plugin {
     const t = this.target();
     if (!t) return;
     const { editor, tok } = t;
-    const sugs = fixes(tok.text).map(s => matchCase(tok.text, s));
+    const sugs = fixes(tok.text, this.langAt(editor.getValue(), tok.line)).map(s => matchCase(tok.text, s));
     if (n) {
       if (!sugs[n - 1]) return new Notice(`No suggestion ${n} for “${tok.text}”`);
-      return this.replace(editor, tok, sugs[n - 1]);
+      return this.pick(editor, tok, sugs[n - 1]);
     }
     const menu = new Menu();
     if (menu.setUseNativeMenu) menu.setUseNativeMenu(false); // Ctrl-n/p and 1-9 need Obsidian's own menu
-    sugs.forEach((s, i) => menu.addItem(item => item.setTitle(`${i + 1}   ${s}`).onClick(() => this.replace(editor, tok, s))));
+    sugs.forEach((s, i) => menu.addItem(item => item.setTitle(`${i + 1}   ${s}`).onClick(() => this.pick(editor, tok, s))));
     if (!sugs.length) menu.addItem(item => item.setTitle(`No suggestions for “${tok.text}”`).setDisabled(true));
     menu.addSeparator();
     menu.addItem(item => item.setTitle(`Add “${tok.text}” to the dictionary   zg`).onClick(() => this.dictionary(true, tok.text)));
     const view = editor.cm, c = view.coordsAtPos(editor.posToOffset({ line: tok.line, ch: tok.from }));
     menu.showAtPosition({ x: c ? c.left : 0, y: c ? c.bottom : 0 });
-    sugs.slice(0, 9).forEach((s, i) => menu.scope.register([], String(i + 1), () => { menu.hide(); this.replace(editor, tok, s); return false; }));
+    sugs.slice(0, 9).forEach((s, i) => menu.scope.register([], String(i + 1), () => { menu.hide(); this.pick(editor, tok, s); return false; }));
     if (sugs.length && menu.select) menu.select(0); // Enter takes the best one
   }
 
+  pick(editor, tok, text) {
+    this.replace(editor, tok, text);
+    this.remember(tok.text, text);
+  }
   replace(editor, tok, text) {
     editor.transaction({ changes: [{ from: { line: tok.line, ch: tok.from }, to: { line: tok.line, ch: tok.to }, text }] });
     editor.setCursor({ line: tok.line, ch: tok.from });
@@ -680,6 +901,14 @@ class VimExtras extends Plugin {
   }
 }
 
+// The note-language command: detect per paragraph, or one of the lists.
+class LangModal extends FuzzySuggestModal {
+  constructor(app, plugin) { super(app); this.plugin = plugin; this.setPlaceholder("Spelling language of this note"); }
+  getItems() { return [null, ...this.plugin.lists.map(l => l.name)]; }
+  getItemText(name) { return name || "Detect per paragraph"; }
+  onChooseItem(name) { const f = this.app.workspace.getActiveFile(); if (f) this.plugin.setNoteLang(f, name); }
+}
+
 class VimExtrasSettings extends PluginSettingTab {
   constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
   display() {
@@ -694,8 +923,17 @@ class VimExtrasSettings extends PluginSettingTab {
     if (p.settings.spelling) {
       new Setting(containerEl).setName("Own underline").setDesc("Underline the misspelled words the way ]s sees them: the whole note at once, never inside maths, code or links. Hides the built-in underline in the editor.")
         .addToggle(t => t.setValue(p.settings.underline).onChange(v => set("underline", v)));
-      new Setting(containerEl).setName("Preferred word list").setDesc("Optional. A file in the vault with one word per line, for example a dictionary of your main language. When two fixes are as close, z= puts the one in this list first.")
-        .addText(t => t.setPlaceholder("words/french.txt").setValue(p.settings.wordList).onChange(async v => { await set("wordList", v); await p.loadWordList(); }));
+      new Setting(containerEl).setName("Word lists").setDesc("Optional, one file of the vault per line: one word per line, best followed by how common it is (a frequency list such as FrequencyWords' fr_50k.txt). Name each file after its language. z= then ranks common words first, and with two languages it detects each paragraph's language and ranks that language's words first; the status bar shows it. A note can set it in its frontmatter: lang: en.")
+        .addTextArea(t => {
+          t.setPlaceholder("words/fr_50k.txt\nwords/en_50k.txt").setValue(p.settings.wordLists).onChange(v => set("wordLists", v));
+          t.inputEl.rows = 3;
+          t.inputEl.addEventListener("blur", () => p.loadLexicon());
+        });
+      new Setting(containerEl).setName("Learn from your notes").setDesc("Words you use in your notes rank higher (so terms missing from the lists are known), and the fix you take for a typo comes first next time. Kept in this plugin's data.")
+        .addToggle(t => t.setValue(p.settings.learn).onChange(async v => { await set("learn", v); p.learnVault(); }))
+        .addExtraButton(b => b.setIcon("rotate-ccw").setTooltip("Forget the fixes you took").onClick(async () => { for (const k of Object.keys(p.picks)) delete p.picks[k]; fixCache.clear(); await p.saveSettings(); new Notice("Forgot the fixes you took"); }));
+      new Setting(containerEl).setName("Keyboard layout").setDesc(`A typo on the key next door costs less. Auto reads the system layout${p.layout ? ` (now ${p.layout})` : ""}.`)
+        .addDropdown(d => { for (const k of KEYBOARDS) d.addOption(k, k === "auto" ? "Auto" : k.toUpperCase()); d.setValue(p.settings.keyboard).onChange(async v => { await set("keyboard", v); await p.detectKeyboard(); this.display(); }); });
     }
 
     new Setting(containerEl).setName("Screen-row numbers").setHeading();
@@ -709,4 +947,4 @@ class VimExtrasSettings extends PluginSettingTab {
 }
 
 module.exports = VimExtras;
-module.exports.core = { prose, tokens, nextBad, wordAt, distance, rank, edits1, accents, candidates, matchCase, wordListOf, byLanguage, cleanSettings };
+module.exports.core = { prose, tokens, nextBad, wordAt, distance, neighbours, edits1, accents, candidates, parseList, listName, sameLang, makeLists, lexicon, nearWords, detectLang, score, rankFixes, WEIGHT, matchCase, cleanSettings };

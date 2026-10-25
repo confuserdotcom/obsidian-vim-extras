@@ -20,11 +20,34 @@ Requires Vim mode: Obsidian's built-in **Settings → Editor → Vim key binding
 
 - Only prose is checked: maths (`$…$`, `$$…$$`), code, frontmatter, links and their targets, URLs, file names, tags, comments, HTML, LaTeX commands, one-letter words and short ALL-CAPS acronyms are skipped.
 - It uses the languages in **Settings → Editor → Spellcheck**, and `zg` / `zw` write to the same dictionary as the editor's right-click menu.
-- `z=` ranks every one-edit and accent spelling the dictionary accepts (`theoreme` → `théorème`) together with Chromium's own suggestions, by an accent-aware edit distance, and keeps the typo's capitals (`Bonjuor` → `Bonjour`).
 - Fast: the open note is checked and its fixes worked out while you pause, so `]s` and `z=` only read caches.
 - **Own underline** (on by default) underlines the misspelled words the way `]s` sees them: the whole note at once, never inside maths or code. It hides the built-in underline in the editor.
-- The fixes are only as good as the system spellchecker: on macOS it checks every language you have, so it can take a word from another language as correct (`helo`, `mond`). The word list below fixes the order for your main language.
-- **Preferred word list** (optional): with two languages on, the spellchecker accepts a word without saying which language it comes from, so `mond` could become `monde` or `mound`. Point this setting at a file in your vault with one word per line (a word list of your main language) and, when two fixes are as close, `z=` puts the one in the list first.
+
+### How `z=` ranks the fixes
+
+It gathers every spelling one edit away (plus any accents: `theoreme` → `théorème`, `aparaitre` → `apparaître`) that the dictionary accepts, with Chromium's own suggestions, and ranks them by:
+
+- **closeness**, with realistic costs: a missing accent or capital costs little, a doubled letter added or dropped (`problemme`) less than a random letter, and the key next door less than any other key (QWERTY, AZERTY or QWERTZ, read from the system);
+- **how common the word is**, from your word lists (below): `mond` → `monde` before `mont` or `gond`;
+- **the language of the paragraph** (below): in an English paragraph `theorme` → `theorem`, in a French one `théorème`;
+- **your notes**: words you use often rank higher, so terms missing from any list (`surjective`, `Cauchy`) are known;
+- **your picks**: the fix you take for a typo comes first next time.
+
+The typo's capitals are kept (`Bonjuor` → `Bonjour`).
+
+### Word lists and languages
+
+**Word lists** takes files of your vault, one per line. Each file has one word per line, best followed by how common it is, like the frequency lists of [FrequencyWords](https://github.com/hermitdave/FrequencyWords) (`content/2018/fr/fr_50k.txt`: `monde 277005`). Name each file after its language: `fr_50k.txt`, `en_50k.txt`, `french.txt` (files of the same language are merged).
+
+With lists of two or more languages:
+
+- each paragraph's language is detected from its words, and `z=` ranks that language's words first and pushes the other language's down: an English paragraph never gets French fixes first, and a note can mix both;
+- a short or mixed paragraph takes the language of the whole note;
+- the status bar shows the language at the cursor (`EN`, `FR`); click it, or run **Set the spelling language of this note**, to set one for the whole note. That writes `lang: en` in the note's frontmatter (shown in the accent colour); "Detect per paragraph" removes it.
+
+Which words get underlined is still up to the system spellchecker, which accepts every language it has: a French word in an English note is not underlined, it is only never offered as a fix. On macOS the system checks every language you have, so it may take a word of another language as correct (`helo`, `mond`).
+
+**Learn from your notes** (on by default) counts the words of your notes and remembers the fixes you take, in the plugin's own data; the button next to it forgets the picks.
 
 The three commands (**Spelling suggestions**, **Add word to dictionary**, **Remove word from dictionary**) also work from the command palette.
 
@@ -76,6 +99,12 @@ No build step: `main.js` is the plugin.
 npm test               # unit tests for the spelling keys
 node e2e.mjs           # real key presses in a running Obsidian (see the header of e2e.mjs)
 node e2e-isolated.mjs  # the same in a separate Obsidian with a throwaway vault (macOS)
+```
+
+`tools/eval.js` measures how often `z=` puts the right fix first, against release 1.0.0, on real typos mined from a vault's git history (`tools/mine-typos.py`) and on synthetic ones:
+
+```sh
+node tools/eval.js <vault> tools/typos.json fr_50k.txt en_50k.txt
 ```
 
 ## License

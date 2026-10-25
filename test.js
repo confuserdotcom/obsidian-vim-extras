@@ -1,7 +1,7 @@
 // Unit tests for the pure parts of the spelling keys:  node test.js
 // (e2e.mjs checks the real keys and the real spellchecker inside Obsidian.)
 const assert = require("assert");
-const { tokens, nextBad, wordAt, distance, rank, edits1, accents, candidates, matchCase, wordListOf, byLanguage, cleanSettings } = require("./main.js").core;
+const { tokens, nextBad, wordAt, distance, neighbours, edits1, accents, candidates, parseList, listName, sameLang, makeLists, lexicon, nearWords, detectLang, rankFixes, matchCase, cleanSettings } = require("./main.js").core;
 
 const at = (line, ch) => ({ line, ch });
 const L = s => s.split("\n");
@@ -77,34 +77,63 @@ t("candidates: one-edit and accent spellings, no duplicates", () => {
   assert(c.includes("monde") && c.includes("mönd"));
   assert.strictEqual(new Set(c).size, c.length);
 });
-t("rank: French list first on ties, closest first", () => {
-  const r = rank("mond", [
-    { src: "fr", list: ["pond", "mon", "monde", "monda", "mondé"] },
-    { src: "both", list: ["mind", "pond", "mod", "mon", "monad"] },
-    { src: "en", list: ["mind", "pond"] },
-  ]);
-  assert.strictEqual(r[0], "monde");
-  assert.strictEqual(new Set(r).size, r.length, "no duplicates");
-  assert(r.length <= 9);
+// ─── word lists, language, ranking ───
+const fr = { path: "w/fr_50k.txt", text: "de 900\nle 800\nmonde 300\nmont 40\nthéorème 20\nthéorie 30\nfonction 50\nest 700" };
+const en = { path: "w/en_50k.txt", text: "the 900\nof 800\nis 700\nmind 200\nhello 300\nhole 50\ntheorem 20\nfunction 60\nmonde 1" };
+const lists = makeLists([fr, en]);
+const lex = lexicon(lists, new Map([["surjective", { count: 12, form: "surjective" }], ["cauchy", { count: 9, form: "Cauchy" }]]));
+const ctx = (lang, picks = {}) => ({ lex, lang, near: neighbours("qwerty"), picks });
+const fixesOf = (typo, lang, picks) => rankFixes(typo, [...nearWords(typo, lex), "mound"], ctx(lang, picks));
+t("parseList: counts, plain words count 1, comments skipped", () => {
+  const l = parseList("monde 300\nMot\n# note\n\n");
+  assert.deepStrictEqual([...l.freq], [["monde", 300], ["mot", 1]]);
+  assert.strictEqual(l.total, 301);
 });
-t("rank: helo → hello first", () => {
-  const r = rank("helo", [{ src: "fr", list: ["hello"] }, { src: "both", list: ["hole", "hello", "help"] }]);
-  assert.strictEqual(r[0], "hello");
-  assert(r.includes("hole"));
+t("listName / sameLang: the language from the file name", () => {
+  assert.deepStrictEqual(["w/fr_50k.txt", "english.txt", "a/b/de-DE.dic"].map(listName), ["fr", "english", "de"]);
+  assert(sameLang("fr", "french") && sameLang("en", "en-US") && !sameLang("fr", "en") && !sameLang(null, "fr"));
 });
-t("rank: théorème from an accentless typo", () => assert.strictEqual(rank("theoreme", [{ src: "fr", list: ["théorème", "théorèmes"] }])[0], "théorème"));
-t("rank: on a tie the first spellcheck language wins", () =>
-  assert.deepStrictEqual(rank("mond", [{ src: "other", list: ["mont"] }, { src: "primary", list: ["mind"] }]), ["mind", "mont"]));
-t("preferred word list: plurals count, other words don't", () => {
-  const fr = wordListOf(new Set(["monde", "théorème", "travail"]));
-  assert(fr("monde") && fr("théorèmes") && fr("Monde"));
-  assert(!fr("mound") && !fr("travaux"));
+t("makeLists merges the files of one language", () => {
+  const m = makeLists([fr, { path: "french.txt", text: "monde\nchose" }, en]);
+  assert.deepStrictEqual(m.map(l => l.name), ["fr", "en"]);
+  assert(m[0].freq.get("chose") === 1 && m[0].freq.get("monde") === 300);
 });
-t("rank: on a tie the French spelling wins (mond → monde, not mound)", () =>
-  assert.strictEqual(rank("mond", byLanguage(["mound", "mind", "monde"], w => w === "monde"))[0], "monde"));
-t("rank: French only breaks ties, a closer English fix still wins", () =>
-  assert.strictEqual(rank("helo", byLanguage(["hel", "hello"], w => w === "hel"))[0], "hello"));
-t("rank: never suggests the word itself", () => assert(!rank("mond", [{ src: "fr", list: ["mond", "monde"] }]).includes("mond")));
+t("nearWords: accents for free plus one edit, from the lists and the vault", () => {
+  const n = nearWords("theoreme", lex);
+  assert(n.includes("théorème"), JSON.stringify(n));
+  assert(nearWords("surjectve", lex).includes("surjective"));
+  assert(nearWords("cauhy", lex).includes("Cauchy"), "keeps the vault spelling");
+});
+t("detectLang: the paragraph's language, null when unclear", () => {
+  assert.strictEqual(detectLang(["the", "theorem", "is"], lists), "en");
+  assert.strictEqual(detectLang(["le", "théorème", "est", "de"], lists), "fr");
+  assert.strictEqual(detectLang(["the"], lists), null, "one word is not enough");
+  assert.strictEqual(detectLang(["the", "of", "le", "de"], lists), null, "a tie");
+  assert.strictEqual(detectLang(["x"], lists.slice(0, 1)), "fr", "one list: always it");
+});
+t("distance: the key next door and a doubled letter cost less", () => {
+  const near = neighbours("qwerty");
+  assert(distance("bonjpur", "bonjour", near) < distance("bonjxur", "bonjour", near));
+  assert(distance("problemme", "probleme") < 1);
+  assert(neighbours("azerty").get("a").has("z") && neighbours("qwerty").get("a").has("q") && !neighbours("qwerty").get("a").has("p"));
+});
+t("rank: the common word first (mond → monde, not mont or mound)", () => assert.strictEqual(fixesOf("mond", "fr")[0], "monde"));
+t("rank: the paragraph's language first (mond in English → mind)", () => assert.strictEqual(fixesOf("mond", "en")[0], "mind"));
+t("rank: theorme → theorem in English, théorème / théorie in French", () => {
+  assert.strictEqual(fixesOf("theorme", "en")[0], "theorem");
+  assert(["théorème", "théorie"].includes(fixesOf("theorme", "fr")[0]));
+});
+t("rank: words of your notes count (surjectve → surjective)", () => assert.strictEqual(fixesOf("surjectve", "fr")[0], "surjective"));
+t("rank: the fix you took before comes first", () => {
+  assert.strictEqual(fixesOf("mond", "fr")[0], "monde", "before any pick");
+  assert.strictEqual(fixesOf("mond", "fr", { mond: { mont: 2 } })[0], "mont");
+});
+t("rank: one spelling per word, never the typo itself", () => {
+  const r = rankFixes("mond", ["monde", "Monde", "mond", "mind"], ctx("fr"));
+  assert.deepStrictEqual(r, ["monde", "mind"]);
+});
+t("rank: no lists at all still ranks by closeness", () =>
+  assert.strictEqual(rankFixes("helo", ["hole", "hello", "help"], { lex: lexicon(), lang: null, near: null, picks: {} })[0], "hello"));
 t("matchCase: Capitalised and ALL CAPS follow the typo", () => {
   assert.strictEqual(matchCase("Bonjuor", "bonjour"), "Bonjour");
   assert.strictEqual(matchCase("MOND", "monde"), "MONDE");
@@ -114,7 +143,8 @@ t("matchCase: Capitalised and ALL CAPS follow the typo", () => {
 // ─── settings ───
 t("settings: defaults, unknown keys dropped, wrong types ignored", () =>
   assert.deepStrictEqual(cleanSettings({ spelling: false, rowNumbers: "yes", wordList: "w.txt", junk: 1 }),
-    { spelling: false, underline: true, wordList: "w.txt", rowNumbers: true, menuKeys: true }));
+    { spelling: false, underline: true, wordLists: "w.txt", learn: true, keyboard: "auto", rowNumbers: true, menuKeys: true }));
+t("settings: an unknown keyboard falls back to auto", () => assert.strictEqual(cleanSettings({ keyboard: "dvorak" }).keyboard, "auto"));
 t("settings: nothing saved yet → defaults", () => assert.strictEqual(cleanSettings(null).spelling, true));
 
 if (failed) { console.log(`${failed} failed, ${n} passed`); process.exit(1); }

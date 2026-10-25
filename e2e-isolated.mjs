@@ -1,7 +1,8 @@
 // Runs e2e.mjs in a separate Obsidian: its own profile and a throwaway vault with only the
 // built-in Vim and this plugin, so the Obsidian you use is never touched.
 //   node e2e-isolated.mjs                       # no preferred word list
-//   WORDLIST=~/words/french.txt node e2e-isolated.mjs   # with one (the ranking cases run too)
+//   WORDLISTS=~/words/fr_50k.txt:~/words/en_50k.txt node e2e-isolated.mjs   # with word lists
+//     (the ranking cases run too; with a French and an English one, the language cases)
 // Background throttling is off: macOS slows a covered window's idle callbacks, which the
 // underline and row-number cases wait for.
 import { spawn, spawnSync } from "child_process";
@@ -11,9 +12,9 @@ const T = fs.mkdtempSync(path.join(os.tmpdir(), "vim-extras-e2e-")), V = path.jo
 const PD = path.join(V, ".obsidian/plugins/vim-extras");
 fs.mkdirSync(PD, { recursive: true }); fs.mkdirSync(UD);
 for (const f of ["main.js", "manifest.json", "styles.css"]) fs.copyFileSync(path.join(REPO, f), path.join(PD, f));
-const list = process.env.WORDLIST && process.env.WORDLIST.replace(/^~/, os.homedir());
-if (list) fs.copyFileSync(list, path.join(PD, "words.txt"));
-fs.writeFileSync(path.join(PD, "data.json"), JSON.stringify({ wordList: list ? ".obsidian/plugins/vim-extras/words.txt" : "" }));
+const lists = (process.env.WORDLISTS || "").split(":").filter(Boolean).map(p => p.replace(/^~/, os.homedir()));
+for (const p of lists) fs.copyFileSync(p, path.join(PD, path.basename(p)));
+fs.writeFileSync(path.join(PD, "data.json"), JSON.stringify({ wordLists: lists.map(p => ".obsidian/plugins/vim-extras/" + path.basename(p)).join("\n") }));
 const J = (f, o) => fs.writeFileSync(path.join(V, ".obsidian", f), JSON.stringify(o));
 J("community-plugins.json", ["vim-extras"]);
 J("app.json", { vimMode: true, livePreview: true, readableLineLength: true, promptDelete: false, spellcheck: true });

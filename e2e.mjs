@@ -1,7 +1,8 @@
 // Live end-to-end check: real key presses and the real spellchecker in a running Obsidian.
 //   1. start Obsidian with the debug port:   obsidian --remote-debugging-port=9222
 //   2. node e2e.mjs   (Vim key bindings on, native menus off, Vim Extras enabled; the
-//      "preferred word list" cases only run when that setting points to a French list;
+//      ranking cases only run with word lists set, the language ones with a French and an
+//      English one: fr_50k.txt + en_50k.txt from FrequencyWords;
 //      PORT=9344 node e2e.mjs for another port)
 // Uses a scratch note zz-vim-extras-e2e.md (deleted at the end). Prints PASS/FAIL per case.
 // Note: port 9222 lets any local process drive Obsidian; relaunch normally when done.
@@ -75,7 +76,9 @@ await ev(`(async()=>{const f=app.vault.getAbstractFileByPath('${NOTE}')||await a
 // Without a word list the ranking is whatever the system spellchecker accepts: a fresh macOS
 // profile checks every language and takes "bosjuor" or "helö" as words, so the cases that
 // judge the order of the fixes need the (French) word list.
-const wordList = await ev(`app.plugins.plugins["vim-extras"].settings.wordList`);
+const wordList = await ev(`app.plugins.plugins["vim-extras"].settings.wordLists.trim()`);
+const langs = await ev(`app.plugins.plugins["vim-extras"].lists.map(l=>l.name.slice(0,2))`);
+const bilingual = langs.includes("fr") && langs.includes("en");
 try {
   // z= menu: only corrections (numbered), the best one pre-selected, then "Add … to the dictionary"
   {
@@ -229,6 +232,52 @@ try {
     await sleep(300);
     const back = await ev(`getComputedStyle(document.querySelector(".workspace-leaf.mod-active .vim-extras-rows")).display`);
     report(hidden === "none" && back !== "none", "toggle command hides and shows them", JSON.stringify({ hidden, back }));
+  }
+  // languages: each paragraph's own, the badge shows it, a note can force one
+  if (bilingual) {
+    const EN = "The proof of this theorme is short and the result is clear.", FR = "La preuve de ce theorme est courte et le résultat est clair.";
+    const first = async (line, word) => {
+      await keys(`${line + 1}G0`);
+      const ch = (await ev(`app.workspace.activeEditor.editor.getLine(${line})`)).indexOf(word);
+      await ev(`app.workspace.activeEditor.editor.setCursor({line:${line},ch:${ch}})`);
+      await keys("z=");
+      await sleep(400);
+      const items = clean(await menu());
+      await keys("<Esc>");
+      return (items[0] || "").replace(/^\d+\s+/, "");
+    };
+    const badge = async () => { await sleep(500); return ev(`(()=>{const b=document.querySelector(".vim-extras-lang");return b&&b.isShown()?b.textContent+(b.hasClass("is-forced")?"!":""):null})()`); };
+    await typeIn(`${EN}\n\n${FR}`);
+    await sleep(WARM);
+    const en = await first(0, "theorme"), enBadge = await badge(), fr = await first(2, "theorme"), frBadge = await badge();
+    report(en === "theorem" && fr !== "theorem" && /^th[ée]or/.test(fr), "z= follows each paragraph's language", JSON.stringify({ en, fr }));
+    report(enBadge === "EN" && frBadge === "FR", "the badge shows the paragraph's language", JSON.stringify({ enBadge, frBadge }));
+    await ev(`(async()=>{const f=app.vault.getAbstractFileByPath('${NOTE}');await app.vault.modify(f,${JSON.stringify("---\nlang: en\n---\n" + FR)})})()`);
+    await sleep(1500);
+    const forced = await first(3, "theorme"), forcedBadge = await badge();
+    report(forced === "theorem" && forcedBadge === "EN!", "lang: en in the frontmatter forces English", JSON.stringify({ forced, forcedBadge }));
+  }
+
+  // the fix you take comes first next time (then forgotten again)
+  if (wordList) {
+    const before = await ev(`JSON.stringify(app.plugins.plugins["vim-extras"].picks["mondz"] || null)`);
+    await typeIn("le mondz est beau ");
+    await sleep(WARM);
+    await keys("0wz=");
+    await sleep(400);
+    const items = clean(await menu()).filter(s => /^\d/.test(s)).map(s => s.replace(/^\d+\s+/, ""));
+    await keys("<Esc>");
+    if (items.length < 2) report(false, "z= remembers the fix you took", JSON.stringify(items));
+    else {
+      await keys("0w2z=");
+      await typeIn("un mondz ici ");
+      await keys("0wz=");
+      await sleep(400);
+      const again = clean(await menu())[0].replace(/^\d+\s+/, "");
+      await keys("<Esc>");
+      report(again === items[1], "z= remembers the fix you took", JSON.stringify({ took: items[1], now: again }));
+    }
+    await ev(`(()=>{const p=app.plugins.plugins["vim-extras"],b=${before};if(b)p.picks["mondz"]=b;else delete p.picks["mondz"];return p.saveSettings()})()`);
   }
   report((await ev(`app.workspace.getActiveFile()?.path`)) === NOTE, "never left the scratch note", "");
 } catch (e) {

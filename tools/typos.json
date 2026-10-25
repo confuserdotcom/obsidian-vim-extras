@@ -1,0 +1,142 @@
+[
+ {
+  "typo": "parite",
+  "fix": "partie",
+  "lang": "fr"
+ },
+ {
+  "typo": "neture",
+  "fix": "neutre",
+  "lang": "fr"
+ },
+ {
+  "typo": "considere",
+  "fix": "considère",
+  "lang": "fr"
+ },
+ {
+  "typo": "evidente",
+  "fix": "évidente",
+  "lang": "fr"
+ },
+ {
+  "typo": "reél",
+  "fix": "réel",
+  "lang": "fr"
+ },
+ {
+  "typo": "Herédité",
+  "fix": "Hérédité",
+  "lang": "fr"
+ },
+ {
+  "typo": "disjunction",
+  "fix": "disjonction",
+  "lang": "en"
+ },
+ {
+  "typo": "Etudions",
+  "fix": "Étudions",
+  "lang": "fr"
+ },
+ {
+  "typo": "precedente",
+  "fix": "précédente",
+  "lang": "fr"
+ },
+ {
+  "typo": "defini",
+  "fix": "défini",
+  "lang": "fr"
+ },
+ {
+  "typo": "continuite",
+  "fix": "continuité",
+  "lang": null
+ },
+ {
+  "typo": "negation",
+  "fix": "négation",
+  "lang": "fr"
+ },
+ {
+  "typo": "derigée",
+  "fix": "dirigée",
+  "lang": "fr"
+ },
+ {
+  "typo": "presidence",
+  "fix": "présidence",
+  "lang": "fr"
+ },
+ {
+  "typo": "irrelvant",
+  "fix": "irrelevant",
+  "lang": "en"
+ },
+ {
+  "typo": "resonne",
+  "fix": "résonne",
+  "lang": "fr"
+ },
+ {
+  "typo": "necessairement",
+  "fix": "nécessairement",
+  "lang": "fr"
+ },
+ {
+  "typo": "elle-meme",
+  "fix": "elle-même",
+  "lang": "fr"
+ },
+ {
+  "typo": "definiton",
+  "fix": "définition",
+  "lang": "fr"
+ },
+ {
+  "typo": "deduit",
+  "fix": "déduit",
+  "lang": "fr"
+ },
+ {
+  "typo": "érédite",
+  "fix": "hérédité",
+  "lang": null
+ },
+ {
+  "typo": "cartesien",
+  "fix": "cartésien",
+  "lang": "fr"
+ },
+ {
+  "typo": "Mathematiques",
+  "fix": "Mathématiques",
+  "lang": "fr"
+ },
+ {
+  "typo": "proprete",
+  "fix": "propreté",
+  "lang": "fr"
+ },
+ {
+  "typo": "verifiant",
+  "fix": "vérifiant",
+  "lang": "fr"
+ },
+ {
+  "typo": "Indiciation",
+  "fix": "Indication",
+  "lang": "fr"
+ },
+ {
+  "typo": "reciproque",
+  "fix": "réciproque",
+  "lang": "fr"
+ },
+ {
+  "typo": "deduire",
+  "fix": "déduire",
+  "lang": "fr"
+ }
+]

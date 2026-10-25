@@ -17,3 +17,6 @@ body.vim-extras-underline .vim-extras-bad {
 }
 .vim-extras-rows div.vim-extras-row-cur { color: var(--text-accent); font-weight: 700; font-size: var(--vim-extras-row-cur-size, 1em); }
 body.vim-extras-rows-off .vim-extras-rows { display: none; }
+
+/* Spelling language badge in the status bar: accent when the note sets it (lang: …). */
+.vim-extras-lang.is-forced { color: var(--text-accent); }
