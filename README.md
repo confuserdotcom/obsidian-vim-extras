@@ -1,4 +1,4 @@
-<img src="docs/readme/hero.svg" width="100%" alt="Vim Extras for Obsidian: an animated editor shows ]s jumping between misspelled words, z= picking a fix with Ctrl-N and Ctrl-P, fixes ranked by the words around them, relative numbers that count wrapped screen rows for gj, and Ctrl-N moving through a menu.">
+<img src="docs/readme/demo.webp" width="100%" alt="Vim Extras recorded in Obsidian: ]s jumps between misspelled words, z= lists fixes ranked by the words around them, the French fix comes first in a French paragraph, and relative numbers count wrapped screen rows.">
 
 <p align="center">
   <b>The Vim keys Obsidian forgot.</b><br>
@@ -30,9 +30,11 @@ Three small additions to [Obsidian](https://obsidian.md)'s Vim mode, each with i
 
 Requires Vim mode: Obsidian's built-in **Settings → Editor → Vim key bindings**, or the [Vim Motions](https://github.com/saberzero1/obsidian-vim-motions) plugin. Desktop only (the spellchecker is Electron's).
 
+<p align="center">▶ <a href="docs/readme/demo.mp4"><b>Watch the full-quality video</b></a></p>
+
 ## Spelling keys
 
-<img src="docs/readme/spelling.svg" width="100%" alt="Spelling keys in action: ]s and [s jump between misspelled words, z= opens the fixes and Ctrl-N / Ctrl-P move through them, 1z= takes the best fix, zg adds a word to the dictionary, and z= ranks mond as monde or mont from the words around it.">
+<img src="docs/readme/spelling.webp" width="100%" alt="Spelling keys recorded in Obsidian: ]s and [s jump between misspelled words, z= lists ranked fixes, and the same typo gets the French fix first in a French paragraph.">
 
 | Keys | What they do |
 | --- | --- |
@@ -87,7 +89,7 @@ The three commands (**Spelling suggestions**, **Add word to dictionary**, **Remo
 
 ## Screen-row numbers
 
-<img src="docs/readme/rows.svg" width="100%" alt="Screen-row numbers and menus in action: every wrapped screen row shows how many gj reach it, 3gj lands exactly there, and Ctrl-N / Ctrl-P move through a right-click menu.">
+<img src="docs/readme/rows.webp" width="100%" alt="Relative numbers per wrapped screen row in Obsidian, matching exactly what gj and gk move by.">
 
 Notes wrap, so most people in Obsidian move with `gj` / `gk` (or map `j` / `k` to them): `5gj` goes 5 screen rows down, and no line numbers say where that is. This draws a relative number on every screen row in the left margin:
 
