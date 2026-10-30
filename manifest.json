@@ -1,7 +1,7 @@
 {
   "id": "vim-extras",
   "name": "Vim Extras",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "minAppVersion": "1.5.0",
   "description": "Spelling keys for Vim mode (]s [s z= zg zw), numbers that count what gj and gk move by on wrapped lines, and Ctrl-N / Ctrl-P in menus.",
   "author": "confuserdotcom",

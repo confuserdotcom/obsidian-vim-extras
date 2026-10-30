@@ -20,7 +20,7 @@
 // units CodeMirror and Obsidian use).
 
 const obsidian = (() => { try { return require("obsidian"); } catch { return {}; } })(); // node tests
-const { Plugin = class {}, PluginSettingTab = class {}, Setting = class {}, Notice = class { constructor(m) { console.log(m); } }, Menu, FuzzySuggestModal = class {} } = obsidian;
+const { Plugin = class {}, PluginSettingTab = class {}, Setting = class {}, Notice = class { constructor(m) { console.log(m); } }, Menu, FuzzySuggestModal = class {}, requireApiVersion = () => false } = obsidian;
 const cm6 = name => { try { return require(name); } catch { return null; } }; // null under node
 const CMState = cm6("@codemirror/state"), CMView = cm6("@codemirror/view");
 
@@ -849,7 +849,7 @@ class RowNumbers {
   // cursor paints) and a held j coalesces into one pass.
   schedule() {
     if (this.idle || !(plugin && plugin.settings.rowNumbers)) return;
-    this.idle = requestIdleCallback(() => {
+    this.idle = window.requestIdleCallback(() => {
       this.idle = 0;
       this.view.requestMeasure({ key: this, read: v => this.measure(v), write: m => this.draw(m) });
     }, { timeout: 80 });
@@ -937,7 +937,7 @@ class RowNumbers {
       d.dataset.head = l ? l[1] : ""; // where that many j lands; read by e2e.mjs
     });
   }
-  destroy() { rowViews.delete(this); this.gone = true; cancelIdleCallback(this.idle); this.view.scrollDOM.removeEventListener("scroll", this.onScroll); this.dom.remove(); }
+  destroy() { rowViews.delete(this); this.gone = true; window.cancelIdleCallback(this.idle); this.view.scrollDOM.removeEventListener("scroll", this.onScroll); this.dom.remove(); }
 }
 
 // ═══ Menu keys ═══════════════════════════════════════════════════════════════════
@@ -997,7 +997,7 @@ class VimExtras extends Plugin {
     const s = session();
     if (s) s.listWordsInSpellCheckerDictionary().then(ws => { for (const w of ws) added.add(w); }).catch(() => {});
     // the model: loaded once Obsidian is idle after startup, then kept up to date with the notes
-    this.app.workspace.onLayoutReady(() => requestIdleCallback(async () => { await this.detectKeyboard(); await this.loadModel(); }, { timeout: 3000 }));
+    this.app.workspace.onLayoutReady(() => window.requestIdleCallback(async () => { await this.detectKeyboard(); await this.loadModel(); }, { timeout: 3000 }));
     const changed = f => f && f.extension === "md" && this.noteChanged(f.path);
     this.registerEvent(this.app.vault.on("modify", changed));
     this.registerEvent(this.app.vault.on("create", changed));
@@ -1008,15 +1008,15 @@ class VimExtras extends Plugin {
     this.badge.addClass("vim-extras-lang", "mod-clickable");
     this.badge.addEventListener("click", e => this.langMenu(e));
     let badgeTimer = null;
-    this.badgeSoon = () => { clearTimeout(badgeTimer); badgeTimer = setTimeout(() => this.updateBadge(), 200); };
-    this.register(() => clearTimeout(badgeTimer));
+    this.badgeSoon = () => { window.clearTimeout(badgeTimer); badgeTimer = window.setTimeout(() => this.updateBadge(), 200); };
+    this.register(() => window.clearTimeout(badgeTimer));
     this.registerEvent(this.app.workspace.on("active-leaf-change", this.badgeSoon));
     this.registerEvent(this.app.workspace.on("editor-change", this.badgeSoon));
     this.registerEvent(this.app.metadataCache.on("changed", this.badgeSoon));
     // background: check the note and prepare the fixes whenever you pause
     let timer = null;
-    this.soon = () => { clearTimeout(timer); timer = setTimeout(() => this.warm(), 150); };
-    this.register(() => clearTimeout(timer));
+    this.soon = () => { window.clearTimeout(timer); timer = window.setTimeout(() => this.warm(), 150); };
+    this.register(() => window.clearTimeout(timer));
     this.registerEvent(this.app.workspace.on("editor-change", this.soon));
     this.registerEvent(this.app.workspace.on("file-open", this.soon));
     this.app.workspace.onLayoutReady(this.soon);
@@ -1033,13 +1033,13 @@ class VimExtras extends Plugin {
 
   onunload() {
     this.unloaded = true;
-    clearTimeout(this.saveTimer);
-    clearTimeout(this.changeTimer);
+    window.clearTimeout(this.saveTimer);
+    window.clearTimeout(this.changeTimer);
     if (this.model && this.model.dirty) this.writeModel(this.model.encode()); // best effort: Obsidian may close first
     know.model = null;
     unregister();
     if (this.unpatchMenus) this.unpatchMenus();
-    if (this.idleId) cancelIdleCallback(this.idleId);
+    if (this.idleId) window.cancelIdleCallback(this.idleId);
     this.job = null;
     for (const [obj, name, orig] of this.patched) obj[name] = orig;
     document.body.classList.remove("vim-extras-underline", "vim-extras-rows-off");
@@ -1090,7 +1090,7 @@ class VimExtras extends Plugin {
   }
   useModel(m) {
     know.model = this.model = m;
-    if (m) requestIdleCallback(() => m.lazy(), { timeout: 2000 }); // so the first z= doesn't pay for it
+    if (m) window.requestIdleCallback(() => m.lazy(), { timeout: 2000 }); // so the first z= doesn't pay for it
     fixCache.clear();
     this.badgeSoon();
     this.soon();
@@ -1107,7 +1107,7 @@ class VimExtras extends Plugin {
     for (const p of gone) m.remove(p);
     for (let i = 0; i < stale.length; i++) {
       m.update(stale[i].path, stale[i].stat.mtime, await this.app.vault.cachedRead(stale[i]));
-      if (i % 8 === 7) await new Promise(r => requestIdleCallback(r, { timeout: 500 }));
+      if (i % 8 === 7) await new Promise(r => window.requestIdleCallback(r, { timeout: 500 }));
       if (this.unloaded || this.model !== m) return;
     }
     this.timings.catchUp = performance.now() - t0;
@@ -1145,8 +1145,8 @@ class VimExtras extends Plugin {
   noteChanged(path) {
     if (!this.model || !this.settings.learn) return;
     (this.changed = this.changed || new Set()).add(path);
-    clearTimeout(this.changeTimer);
-    this.changeTimer = setTimeout(async () => {
+    window.clearTimeout(this.changeTimer);
+    this.changeTimer = window.setTimeout(async () => {
       const paths = [...this.changed];
       this.changed.clear();
       for (const p of paths) {
@@ -1158,8 +1158,8 @@ class VimExtras extends Plugin {
   }
   // Save when idle, a while after the last change; a big delta is folded in by a rebuild.
   saveSoon() {
-    clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => requestIdleCallback(async () => {
+    window.clearTimeout(this.saveTimer);
+    this.saveTimer = window.setTimeout(() => window.requestIdleCallback(async () => {
       const m = this.model;
       if (!m || !m.dirty || this.unloaded) return;
       if (m.deltaShare() > DELTA_MAX) return this.rebuildModel(m.sig);
@@ -1293,7 +1293,7 @@ class VimExtras extends Plugin {
   }
   idle() {
     if (this.idleId || !this.job) return;
-    this.idleId = requestIdleCallback(deadline => {
+    this.idleId = window.requestIdleCallback(deadline => {
       this.idleId = null;
       let step = null;
       // a "suggest" step is one long call: only start it with a whole idle slot ahead
@@ -1363,40 +1363,82 @@ class LangModal extends FuzzySuggestModal {
   onChooseItem(name) { const f = this.app.workspace.getActiveFile(); if (f) this.plugin.setNoteLang(f, name); }
 }
 
+// Obsidian 1.13+ draws the settings tab from getSettingDefinitions() and lists every row in its
+// settings search; older versions call display(), which draws the same definitions here.
+function drawSettings(tab, defs, nested) {
+  const el = tab.containerEl;
+  if (!nested) el.empty();
+  for (const d of defs) {
+    if ((typeof d.visible === "function" ? d.visible() : d.visible) === false) continue;
+    if (d.type === "group") {
+      if (d.heading) new Setting(el).setName(d.heading).setHeading();
+      drawSettings(tab, d.items || [], true);
+      continue;
+    }
+    const row = new Setting(el).setName(d.name), c = d.control;
+    if (d.desc) row.setDesc(d.desc);
+    if (d.render) d.render(row);
+    if (!c) continue;
+    const value = tab.getControlValue(c.key) ?? c.defaultValue, ph = c.placeholder || "";
+    const commit = async (v, redraw) => {
+      if (c.validate && c.validate(v)) return;
+      await tab.setControlValue(c.key, v);
+      if (redraw) tab.display(); // the rows that hang on this one show or hide
+    };
+    if (c.type === "toggle") row.addToggle(t => t.setValue(!!value).onChange(v => commit(v, true)));
+    else if (c.type === "dropdown") row.addDropdown(t => t.addOptions(c.options).setValue(value).onChange(v => commit(v, true)));
+    else if (c.type === "number") row.addText(t => t.setPlaceholder(ph).setValue(String(value ?? "")).onChange(v => {
+      const n = Number(v);
+      if (v.trim() && Number.isFinite(n) && !(n < c.min) && !(n > c.max)) commit(n);
+    }));
+    else row.addText(t => t.setPlaceholder(ph).setValue(value ?? "").onChange(v => commit(v)));
+  }
+}
+
 class VimExtrasSettings extends PluginSettingTab {
   constructor(app, plugin) { super(app, plugin); this.plugin = plugin; }
-  display() {
-    const { containerEl } = this, p = this.plugin, set = async (k, v) => { p.settings[k] = v; await p.saveSettings(); };
-    containerEl.empty();
-    if (!vimApi())
-      containerEl.createEl("p", { text: "Vim mode is off: the spelling keys and the screen-row numbers need Settings → Editor → Vim key bindings, or the Vim Motions plugin.", cls: "mod-warning" });
+  getControlValue(key) { return this.plugin.settings[key]; }
+  async setControlValue(key, value) { this.plugin.settings[key] = value; await this.plugin.saveSettings(); }
+  display() { drawSettings(this, this.getSettingDefinitions()); }
 
-    new Setting(containerEl).setName("Spelling").setHeading();
-    new Setting(containerEl).setName("Spelling keys").setDesc("]s [s jump to the next or previous misspelled word, z= lists fixes, zg adds a word to the dictionary and zw takes it out. Uses the languages in Settings → Editor → Spellcheck.")
-      .addToggle(t => t.setValue(p.settings.spelling).onChange(v => { set("spelling", v); this.display(); }));
-    if (p.settings.spelling) {
-      new Setting(containerEl).setName("Own underline").setDesc("Underline the misspelled words the way ]s sees them: the whole note at once, never inside maths, code or links. Hides the built-in underline in the editor.")
-        .addToggle(t => t.setValue(p.settings.underline).onChange(v => set("underline", v)));
-      new Setting(containerEl).setName("Word lists").setDesc("Optional, one file of the vault per line: one word per line, best followed by how common it is (a frequency list such as FrequencyWords' fr_50k.txt). Name each file after its language. z= then ranks common words first, and with two languages it detects each paragraph's language and ranks that language's words first; the status bar shows it. A note can set it in its frontmatter: lang: en.")
-        .addTextArea(t => {
-          t.setPlaceholder("words/fr_50k.txt\nwords/en_50k.txt").setValue(p.settings.wordLists).onChange(v => set("wordLists", v));
-          t.inputEl.rows = 3;
-          t.inputEl.addEventListener("blur", () => p.loadModel());
-        });
-      new Setting(containerEl).setName("Learn from your notes").setDesc("Words you use in your notes rank higher (so terms missing from the lists are known), and the fix you take for a typo comes first next time. Kept in this plugin's data.")
-        .addToggle(t => t.setValue(p.settings.learn).onChange(async v => { await set("learn", v); p.loadModel(); }))
-        .addExtraButton(b => b.setIcon("rotate-ccw").setTooltip("Forget the fixes you took").onClick(async () => { for (const k of Object.keys(p.picks)) delete p.picks[k]; fixCache.clear(); await p.saveSettings(); new Notice("Forgot the fixes you took"); }));
-      new Setting(containerEl).setName("Keyboard layout").setDesc(`A typo on the key next door costs less. Auto reads the system layout${p.layout ? ` (now ${p.layout})` : ""}.`)
-        .addDropdown(d => { for (const k of KEYBOARDS) d.addOption(k, k === "auto" ? "Auto" : k.toUpperCase()); d.setValue(p.settings.keyboard).onChange(async v => { await set("keyboard", v); await p.detectKeyboard(); this.display(); }); });
-    }
+  // After a change that alters the rows themselves (the keyboard layout's description)
+  redraw() { if (requireApiVersion("1.13.0")) this.update(); else this.display(); }
 
-    new Setting(containerEl).setName("Screen-row numbers").setHeading();
-    new Setting(containerEl).setName("Screen-row numbers").setDesc("Relative numbers in the left margin, one per screen row, counting exactly what gj and gk move by. The cursor row shows its line number. Turn on Settings → Editor → Readable line length so the margin has room.")
-      .addToggle(t => t.setValue(p.settings.rowNumbers).onChange(v => set("rowNumbers", v)));
-
-    new Setting(containerEl).setName("Menus").setHeading();
-    new Setting(containerEl).setName("Ctrl-N / Ctrl-P in menus").setDesc("Move the selection in Obsidian's menus, like in the quick switcher. Needs Settings → Appearance → Native menus off.")
-      .addToggle(t => t.setValue(p.settings.menuKeys).onChange(v => set("menuKeys", v)));
+  getSettingDefinitions() {
+    const p = this.plugin, spelling = () => p.settings.spelling;
+    return [
+      { name: "Vim mode is off", desc: "The spelling keys and the screen-row numbers need Settings → Editor → Vim key bindings, or the Vim Motions plugin.",
+        visible: () => !vimApi(), render: row => row.settingEl.addClass("mod-warning") },
+      { type: "group", heading: "Spelling", items: [
+        { name: "Spelling keys", desc: "]s [s jump to the next or previous misspelled word, z= lists fixes, zg adds a word to the dictionary and zw takes it out. Uses the languages in Settings → Editor → Spellcheck.",
+          control: { type: "toggle", key: "spelling" } },
+        { name: "Own underline", desc: "Underline the misspelled words the way ]s sees them: the whole note at once, never inside maths, code or links. Hides the built-in underline in the editor.",
+          visible: spelling, control: { type: "toggle", key: "underline" } },
+        { name: "Word lists", desc: "Optional, one file of the vault per line: one word per line, best followed by how common it is (a frequency list such as FrequencyWords' fr_50k.txt). Name each file after its language. z= then ranks common words first, and with two languages it detects each paragraph's language and ranks that language's words first; the status bar shows it. A note can set it in its frontmatter: lang: en.",
+          visible: spelling, render: row => row.addTextArea(t => {
+            t.setPlaceholder("words/fr_50k.txt\nwords/en_50k.txt").setValue(p.settings.wordLists).onChange(v => this.setControlValue("wordLists", v));
+            t.inputEl.rows = 3;
+            t.inputEl.addEventListener("blur", () => p.loadModel());
+          }) },
+        { name: "Learn from your notes", desc: "Words you use in your notes rank higher (so terms missing from the lists are known), and the fix you take for a typo comes first next time. Kept in this plugin's data.",
+          visible: spelling, render: row => row
+            .addToggle(t => t.setValue(p.settings.learn).onChange(async v => { await this.setControlValue("learn", v); p.loadModel(); }))
+            .addExtraButton(b => b.setIcon("rotate-ccw").setTooltip("Forget the fixes you took").onClick(async () => { for (const k of Object.keys(p.picks)) delete p.picks[k]; fixCache.clear(); await p.saveSettings(); new Notice("Forgot the fixes you took"); })) },
+        { name: "Keyboard layout", desc: `A typo on the key next door costs less. Auto reads the system layout${p.layout ? ` (now ${p.layout})` : ""}.`,
+          visible: spelling, render: row => row.addDropdown(d => {
+            for (const k of KEYBOARDS) d.addOption(k, k === "auto" ? "Auto" : k.toUpperCase());
+            d.setValue(p.settings.keyboard).onChange(async v => { await this.setControlValue("keyboard", v); await p.detectKeyboard(); this.redraw(); });
+          }) },
+      ] },
+      { type: "group", heading: "Screen-row numbers", items: [
+        { name: "Screen-row numbers", desc: "Relative numbers in the left margin, one per screen row, counting exactly what gj and gk move by. The cursor row shows its line number. Turn on Settings → Editor → Readable line length so the margin has room.",
+          control: { type: "toggle", key: "rowNumbers" } },
+      ] },
+      { type: "group", heading: "Menus", items: [
+        { name: "Ctrl-N / Ctrl-P in menus", desc: "Move the selection in Obsidian's menus, like in the quick switcher. Needs Settings → Appearance → Native menus off.",
+          control: { type: "toggle", key: "menuKeys" } },
+      ] },
+    ];
   }
 }
 
