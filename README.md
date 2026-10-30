@@ -1,4 +1,26 @@
-# Vim Extras
+<img src="docs/readme/hero.svg" width="100%" alt="Vim Extras for Obsidian: an animated editor shows ]s jumping between misspelled words, z= picking a fix with Ctrl-N and Ctrl-P, fixes ranked by the words around them, relative numbers that count wrapped screen rows for gj, and Ctrl-N moving through a menu.">
+
+<p align="center">
+  <b>The Vim keys Obsidian forgot.</b><br>
+  Fix typos with <code>]s</code> and <code>z=</code>, count wrapped rows for <code>gj</code>, and drive every menu with <code>Ctrl-N</code> / <code>Ctrl-P</code>.
+</p>
+
+<p align="center">
+  <a href="https://github.com/confuserdotcom/obsidian-vim-extras/releases/latest"><img src="https://img.shields.io/github/v/release/confuserdotcom/obsidian-vim-extras?style=flat-square&color=7c3aed&label=release" alt="Latest release"></a>
+  <a href="https://github.com/confuserdotcom/obsidian-vim-extras/releases"><img src="https://img.shields.io/github/downloads/confuserdotcom/obsidian-vim-extras/total?style=flat-square&color=7c3aed" alt="Downloads"></a>
+  <a href="https://github.com/confuserdotcom/obsidian-vim-extras/actions/workflows/test.yml"><img src="https://img.shields.io/github/actions/workflow/status/confuserdotcom/obsidian-vim-extras/test.yml?branch=main&style=flat-square&label=tests" alt="Tests"></a>
+  <a href="https://github.com/confuserdotcom/obsidian-vim-extras/stargazers"><img src="https://img.shields.io/github/stars/confuserdotcom/obsidian-vim-extras?style=flat-square&color=7c3aed" alt="Stars"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/confuserdotcom/obsidian-vim-extras?style=flat-square&color=7c3aed" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/Obsidian-desktop-7c3aed?style=flat-square&logo=obsidian&logoColor=white" alt="Obsidian desktop">
+</p>
+
+<p align="center">
+  <a href="#spelling-keys">Spelling keys</a> ·
+  <a href="#screen-row-numbers">Screen-row numbers</a> ·
+  <a href="#ctrl-n--ctrl-p-in-menus">Ctrl-N / Ctrl-P</a> ·
+  <a href="#vimrc">vimrc</a> ·
+  <a href="#install">Install</a>
+</p>
 
 Three small additions to [Obsidian](https://obsidian.md)'s Vim mode, each with its own switch in the settings:
 
@@ -9,6 +31,8 @@ Three small additions to [Obsidian](https://obsidian.md)'s Vim mode, each with i
 Requires Vim mode: Obsidian's built-in **Settings → Editor → Vim key bindings**, or the [Vim Motions](https://github.com/saberzero1/obsidian-vim-motions) plugin. Desktop only (the spellchecker is Electron's).
 
 ## Spelling keys
+
+<img src="docs/readme/spelling.svg" width="100%" alt="Spelling keys in action: ]s and [s jump between misspelled words, z= opens the fixes and Ctrl-N / Ctrl-P move through them, 1z= takes the best fix, zg adds a word to the dictionary, and z= ranks mond as monde or mont from the words around it.">
 
 | Keys | What they do |
 | --- | --- |
@@ -62,6 +86,8 @@ What `z=` knows (the word lists, your notes' words and word pairs) is compiled i
 The three commands (**Spelling suggestions**, **Add word to dictionary**, **Remove word from dictionary**) also work from the command palette.
 
 ## Screen-row numbers
+
+<img src="docs/readme/rows.svg" width="100%" alt="Screen-row numbers and menus in action: every wrapped screen row shows how many gj reach it, 3gj lands exactly there, and Ctrl-N / Ctrl-P move through a right-click menu.">
 
 Notes wrap, so most people in Obsidian move with `gj` / `gk` (or map `j` / `k` to them): `5gj` goes 5 screen rows down, and no line numbers say where that is. This draws a relative number on every screen row in the left margin:
 
@@ -120,6 +146,24 @@ node --expose-gc tools/bench.js <vault> fr_50k.txt en_50k.txt   # build, size, l
 
 `npm test` also checks that the incremental path lands exactly where a full rebuild does (200 random runs of notes edited, deleted and renamed), and that the worker's source builds the very same bytes.
 
+## Support
+
+The plugin is free and stays free. If it saves you time, you can [support it here](https://confuserdotcom.lemonsqueezy.com).
+
 ## License
 
 [MIT](LICENSE)
+
+---
+
+<p align="center">
+  If Vim Extras saves you a trip to the mouse, <a href="https://github.com/confuserdotcom/obsidian-vim-extras">a ⭐ on GitHub</a> helps other Vim users find it.<br>
+  Bugs and ideas: <a href="https://github.com/confuserdotcom/obsidian-vim-extras/issues">open an issue</a>.
+</p>
+
+<a href="https://star-history.com/#confuserdotcom/obsidian-vim-extras&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=confuserdotcom/obsidian-vim-extras&type=Date&theme=dark">
+    <img src="https://api.star-history.com/svg?repos=confuserdotcom/obsidian-vim-extras&type=Date" alt="Star history" width="100%">
+  </picture>
+</a>

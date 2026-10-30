@@ -6,5 +6,6 @@
   "description": "Spelling keys for Vim mode (]s [s z= zg zw), numbers that count what gj and gk move by on wrapped lines, and Ctrl-N / Ctrl-P in menus.",
   "author": "confuserdotcom",
   "authorUrl": "https://github.com/confuserdotcom",
+  "fundingUrl": "https://confuserdotcom.lemonsqueezy.com",
   "isDesktopOnly": true
 }
